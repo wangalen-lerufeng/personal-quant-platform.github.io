@@ -29,6 +29,8 @@ from .market_data import InMemoryMarketDataFeed
 from .market_calendar import MarketCalendar
 from .market_state import classify_market_state
 from .order_features import analyze_order_flow
+from .phase9_service import run_phase9
+from .pipeline import TargetPosition, plan_orders, submit_to_simulation
 from .providers import AkshareForexProvider, TushareDatasetProvider, TushareProvider, TushareStockDailyProvider
 from .risk import RiskEngine, RiskLimits, RiskMonitor
 from .runtime import StrategyRuntime
@@ -192,6 +194,39 @@ def live_readiness_payload(payload: dict) -> dict:
     return LiveReadinessGate(
         minimum_paper_days=int(payload.get("minimum_paper_days", 30))
     ).assess(evidence)
+
+
+def phase9_payload(payload: dict, control_plane, simulation_registry) -> dict:
+    """Run the Phase 9 pipeline, risk-gate targets, and submit to paper simulation."""
+    symbols = payload.get("symbols", [])
+    if not isinstance(symbols, list) or not symbols:
+        raise ValueError("symbols must be a non-empty list")
+    top_k = int(payload.get("top_k", 3))
+
+    research = run_phase9(symbols, top_k=top_k)
+    risk_engine = control_plane.risk_engine if control_plane is not None else RiskEngine(RiskLimits())
+    targets = [
+        TargetPosition(symbol=item["symbol"], weight=item["weight"])
+        for item in research["targets"]
+    ]
+    plan = plan_orders({}, targets, risk_engine)
+
+    account_id = "paper-main"
+    try:
+        session = simulation_registry.get(account_id)
+    except KeyError:
+        session = simulation_registry.create(account_id, initial_cash=1_000_000.0)
+    submission = submit_to_simulation(plan, session)
+
+    return {
+        **research,
+        "orders": [{"symbol": order.symbol, "side": order.side.value, "quantity": order.quantity} for order in plan.orders],
+        "rejected": [dict(item) for item in plan.rejected],
+        "audit": [{"stage": entry.stage, "symbol": entry.symbol, "detail": dict(entry.detail)} for entry in plan.audit],
+        "submission": submission,
+        "paper_only": True,
+        "execution_enabled": False,
+    }
 
 
 def simulation_create_payload(payload: dict, registry: PaperSimulationRegistry) -> dict:
@@ -728,6 +763,7 @@ _JSON_POST_ROUTES = {
     "/market-state", "/live-readiness", "/simulation/create",
     "/simulation/order", "/simulation/market", "/simulation/control",
     "/simulation/reconciliation", "/simulation/acceptance", "/backtest",
+    "/phase9/run",
 }
 
 
@@ -920,6 +956,31 @@ def make_handler(
                     length = int(self.headers.get("Content-Length", "0"))
                     body = simulation_routes[route](
                         json.loads(self.rfile.read(length)),
+                        simulation_registry,
+                    )
+                    status = 200
+                except (
+                    ValueError,
+                    KeyError,
+                    TypeError,
+                    RuntimeError,
+                    json.JSONDecodeError,
+                ) as error:
+                    body = {"error": str(error), "execution_enabled": False}
+                    status = 400
+                payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+            if route == "/phase9/run":
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                    body = phase9_payload(
+                        json.loads(self.rfile.read(length)),
+                        control_plane,
                         simulation_registry,
                     )
                     status = 200
