@@ -19,6 +19,7 @@ from .ml_baseline import BaselineConfig, run_baseline
 from .pipeline import build_targets
 from .position_sizing import SizingCosts, build_states
 from .ppo_policy import train_ppo
+from .providers import TushareDatasetProvider
 from .trading_agents import EvidenceItem, build_role_verdicts, synthesize_decision
 
 
@@ -55,6 +56,48 @@ def synthetic_etf_panel(symbols, n_days: int = 120) -> pd.DataFrame:
     )
 
 
+def build_tushare_etf_panel(symbols, start_date, end_date, token_env="TUSHARE_TOKEN") -> pd.DataFrame:
+    """Fetch real ETF daily + adjustment data from Tushare and build a panel."""
+    symbols = [str(symbol).strip() for symbol in symbols if str(symbol).strip()]
+    if len(symbols) < 2:
+        raise ValueError("at least two symbols are required")
+    if not start_date or not end_date:
+        raise ValueError("start_date and end_date are required")
+
+    provider = TushareDatasetProvider(token_env)
+    daily_rows, adj_rows = [], []
+    for symbol in symbols:
+        for row in provider.fetch_records("fund_daily", symbol, start_date, end_date):
+            if row.get("close") is None:
+                continue
+            daily_rows.append({
+                "symbol": symbol,
+                "trade_date": str(row.get("trade_date", "")).replace("-", "")[:8],
+                "close": float(row["close"]),
+                "volume": float(row.get("vol") or 0.0),
+                "amount": float(row.get("amount") or 0.0),
+            })
+        for row in provider.fetch_records("fund_adj", symbol, start_date, end_date):
+            adj_rows.append({
+                "symbol": symbol,
+                "trade_date": str(row.get("trade_date", "")).replace("-", "")[:8],
+                "adj_factor": float(row["adj_factor"]),
+            })
+    if not daily_rows:
+        raise ValueError("no Tushare fund_daily data returned for the given symbols and dates")
+
+    daily = pd.DataFrame(daily_rows)
+    adj_factors = pd.DataFrame(adj_rows)
+    if adj_factors.empty:
+        adj_factors = pd.DataFrame({
+            "symbol": daily["symbol"],
+            "trade_date": daily["trade_date"],
+            "adj_factor": 1.0,
+        })
+    basics = [{"ts_code": symbol, "list_status": "L"} for symbol in symbols]
+    return build_etf_panel(daily, adj_factors, basics=basics, horizons=(5,))
+
+
 def _verification_evidence(panel, symbol, as_of, flag_volatile):
     symbol_panel = panel[panel["symbol"] == symbol].sort_values("timestamp")
     returns = symbol_panel["adj_close"].pct_change().dropna()
@@ -71,15 +114,13 @@ def _verification_evidence(panel, symbol, as_of, flag_volatile):
     ]
 
 
-def run_phase9(symbols, *, top_k: int = 3, seed: int = 42) -> dict:
-    """Run the Phase 9 research chain and return a structured result."""
-    symbols = [str(symbol).strip() for symbol in symbols if str(symbol).strip()]
-    if len(symbols) < 2:
-        raise ValueError("at least two symbols are required")
+def run_phase9(panel, *, top_k: int = 3, seed: int = 42) -> dict:
+    """Run the Phase 9 research chain on a pre-built panel and return a result."""
     if top_k < 1:
         raise ValueError("top_k must be at least 1")
+    if panel["symbol"].nunique() < 2:
+        raise ValueError("panel must contain at least two symbols")
 
-    panel = synthetic_etf_panel(symbols)
     baseline = run_baseline(
         panel,
         config=BaselineConfig(n_estimators=100, num_leaves=15, min_child_samples=10, seed=seed),

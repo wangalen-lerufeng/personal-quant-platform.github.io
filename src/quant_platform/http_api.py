@@ -29,7 +29,7 @@ from .market_data import InMemoryMarketDataFeed
 from .market_calendar import MarketCalendar
 from .market_state import classify_market_state
 from .order_features import analyze_order_flow
-from .phase9_service import run_phase9
+from .phase9_service import build_tushare_etf_panel, run_phase9
 from .pipeline import TargetPosition, plan_orders, submit_to_simulation
 from .providers import AkshareForexProvider, TushareDatasetProvider, TushareProvider, TushareStockDailyProvider
 from .risk import RiskEngine, RiskLimits, RiskMonitor
@@ -197,13 +197,18 @@ def live_readiness_payload(payload: dict) -> dict:
 
 
 def phase9_payload(payload: dict, control_plane, simulation_registry) -> dict:
-    """Run the Phase 9 pipeline, risk-gate targets, and submit to paper simulation."""
+    """Run the Phase 9 pipeline on Tushare data, risk-gate, and submit to paper."""
     symbols = payload.get("symbols", [])
     if not isinstance(symbols, list) or not symbols:
         raise ValueError("symbols must be a non-empty list")
     top_k = int(payload.get("top_k", 3))
+    start_date = str(payload.get("start_date", "")).strip()
+    end_date = str(payload.get("end_date", "")).strip() or date.today().isoformat()
+    if not start_date:
+        raise ValueError("start_date is required")
 
-    research = run_phase9(symbols, top_k=top_k)
+    panel = build_tushare_etf_panel(symbols, start_date, end_date)
+    research = run_phase9(panel, top_k=top_k)
     risk_engine = control_plane.risk_engine if control_plane is not None else RiskEngine(RiskLimits())
     targets = [
         TargetPosition(symbol=item["symbol"], weight=item["weight"])

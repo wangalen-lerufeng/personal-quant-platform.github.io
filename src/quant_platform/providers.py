@@ -185,6 +185,7 @@ class TushareDatasetProvider:
         "fund_basic",
         "fund_adj",
         "fund_share",
+        "fund_daily",
     }
 
     def __init__(self, token_env: str = "TUSHARE_TOKEN"):
