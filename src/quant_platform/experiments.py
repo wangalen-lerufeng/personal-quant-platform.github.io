@@ -16,7 +16,8 @@ class ExperimentStore:
 
 class SqliteExperimentStore:
     def __init__(self, database: str):
-        self.connection = sqlite3.connect(database)
+        # ThreadingHTTPServer uses worker threads; allow cross-thread access.
+        self.connection = sqlite3.connect(database, check_same_thread=False)
         self.connection.row_factory = sqlite3.Row
         self.connection.execute(
             "CREATE TABLE IF NOT EXISTS experiments (strategy_id TEXT NOT NULL, metrics_json TEXT NOT NULL)"

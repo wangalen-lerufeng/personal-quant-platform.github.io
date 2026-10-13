@@ -16,7 +16,9 @@ class SqliteAuditStore:
     """Local development store; production can implement the same methods on PostgreSQL."""
 
     def __init__(self, database: str = ":memory:", connection=None):
-        self.connection = connection or sqlite3.connect(database)
+        # ThreadingHTTPServer serves each request in a worker thread, so the
+        # connection created at startup is used from a different thread.
+        self.connection = connection or sqlite3.connect(database, check_same_thread=False)
         if connection is None:
             _secure_database_file(database)
         self.connection.row_factory = sqlite3.Row
@@ -111,7 +113,8 @@ class SimulationAccountStore:
     """Append-only snapshots for recoverable paper-account state."""
 
     def __init__(self, database: str):
-        self.connection = sqlite3.connect(str(database))
+        # See SqliteAuditStore: the connection is shared across request threads.
+        self.connection = sqlite3.connect(str(database), check_same_thread=False)
         _secure_database_file(str(database))
         self.connection.row_factory = sqlite3.Row
         self.connection.execute(

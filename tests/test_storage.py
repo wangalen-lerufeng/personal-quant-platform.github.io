@@ -1,6 +1,7 @@
 import unittest
 import sqlite3
 import stat
+import threading
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -96,3 +97,25 @@ class StorageTests(unittest.TestCase):
             permissions = stat.S_IMODE(database.stat().st_mode)
 
             self.assertEqual(permissions, 0o600)
+
+    def test_store_is_usable_across_threads(self):
+        with TemporaryDirectory() as directory:
+            audit = SqliteAuditStore(str(Path(directory) / "audit.db"))
+            simulation = SimulationAccountStore(str(Path(directory) / "sim.db"))
+            errors = []
+
+            def worker():
+                try:
+                    intent = OrderIntent("510300", OrderSide.BUY, 100, "demo", asset_class=AssetClass.ETF)
+                    audit.record_order("threaded-1", intent, "accepted")
+                    simulation.save_session_state("paper-a", {"version": 1, "account_id": "paper-a"})
+                except Exception as error:
+                    errors.append(error)
+
+            thread = threading.Thread(target=worker)
+            thread.start()
+            thread.join()
+
+            self.assertEqual(errors, [])
+            self.assertEqual(audit.list_orders()[0]["order_id"], "threaded-1")
+            self.assertEqual(simulation.load_session_state("paper-a")["account_id"], "paper-a")
