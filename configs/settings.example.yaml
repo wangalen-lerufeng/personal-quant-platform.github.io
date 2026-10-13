@@ -1,0 +1,52 @@
+app:
+  name: personal-quant-platform
+  environment: development
+  live_trading_enabled: false
+
+storage:
+  database: data/platform.db
+
+risk:
+  max_order_quantity: 1000000
+  max_position_quantity: null
+  max_order_value: null
+  max_daily_loss: null
+  max_drawdown: null
+  kill_switch: false
+
+adapters:
+  qmt:
+    enabled: false
+    mode: paper
+  ctp:
+    enabled: false
+    mode: paper
+  mt5:
+    enabled: false
+    mode: paper
+
+ai:
+  execution_tools_enabled: false
+
+# 只读在线行情接口；密钥通过环境变量注入，不写入配置文件
+market_data:
+  enabled: false
+  url: https://your-provider.example.com/v1/quotes
+  api_key_env: MARKET_DATA_API_KEY
+  timeout_seconds: 10
+
+# Tushare Pro：只读 A 股 ETF/指数研究数据，Token 通过环境变量注入
+tushare:
+  enabled: true
+  token_env: TUSHARE_TOKEN
+
+# 模型仅用于研究问答和工具编排；不授予下单权限
+model:
+  enabled: true
+  provider: deepseek
+  base_url: https://api.deepseek.com
+  name: deepseek-v4-pro
+  api_key_env: AI_API_KEY
+  temperature: 0.2
+  max_tokens: 7000
+  timeout_seconds: 300

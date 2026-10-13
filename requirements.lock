@@ -1,0 +1,11 @@
+# Runtime dependency lock for Python 3.11.
+# Regenerate and re-verify before upgrading any package.
+PyYAML==6.0.2
+certifi==2026.5.20
+charset-normalizer==3.4.7
+idna==3.11
+requests==2.33.1
+urllib3==2.6.3
+lightgbm==4.7.0
+narwhals==2.27.1
+scipy==1.17.1

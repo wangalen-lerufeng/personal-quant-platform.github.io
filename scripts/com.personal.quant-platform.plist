@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.personal.quant-platform</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>/Users/apple/personal-quant-platform/scripts/launch_server.zsh</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/apple/personal-quant-platform</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>/Users/apple</string>
+    <key>QUANT_PLATFORM_LAUNCHD</key>
+    <string>1</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>2</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/apple/personal-quant-platform/logs/server.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/apple/personal-quant-platform/logs/server.log</string>
+</dict>
+</plist>
