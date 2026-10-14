@@ -3,7 +3,7 @@ set -eo pipefail
 umask 077
 
 PROJECT_DIR="/Users/apple/personal-quant-platform"
-PYTHON_BIN="${PYTHON_BIN:-/usr/local/bin/python3}"
+PYTHON_BIN="${PYTHON_BIN:-${PROJECT_DIR}/.venv-qlib/bin/python}"
 CONFIG="${CONFIG:-${PROJECT_DIR}/configs/settings.example.yaml}"
 
 if [[ -f "${HOME}/.zshrc" ]]; then

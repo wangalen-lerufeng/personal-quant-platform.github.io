@@ -9,3 +9,6 @@ logs/
 secrets/
 .DS_Store
 *.egg-info/
+.venv-qlib/
+.claude/settings.local.json
+mlruns/

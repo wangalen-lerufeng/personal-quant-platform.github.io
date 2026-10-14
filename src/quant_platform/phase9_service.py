@@ -13,13 +13,12 @@ risk gate and paper submission.
 import numpy as np
 import pandas as pd
 
-from .double_ensemble import DoubleEnsembleConfig, run_double_ensemble
 from .etf_universe import build_etf_panel
-from .ml_baseline import BaselineConfig, run_baseline
 from .pipeline import build_targets
 from .position_sizing import SizingCosts, build_states
 from .ppo_policy import train_ppo
 from .providers import TushareDatasetProvider
+from .qlib_model import evaluate_scores, run_qlib_baseline, run_qlib_ensemble
 from .trading_agents import EvidenceItem, build_role_verdicts, synthesize_decision
 
 
@@ -121,25 +120,19 @@ def run_phase9(panel, *, top_k: int = 3, seed: int = 42) -> dict:
     if panel["symbol"].nunique() < 2:
         raise ValueError("panel must contain at least two symbols")
 
-    baseline = run_baseline(
-        panel,
-        config=BaselineConfig(n_estimators=100, num_leaves=15, min_child_samples=10, seed=seed),
-        out_of_sample_start=None,
-        top_k=top_k,
+    baseline = run_qlib_baseline(
+        panel, top_k=top_k, num_boost_round=100, num_leaves=15, learning_rate=0.05,
     )
-    ensemble = run_double_ensemble(
-        panel,
-        config=DoubleEnsembleConfig(
-            n_models=5, n_estimators=50, num_leaves=15, min_child_samples=10, seed=seed,
-        ),
-        out_of_sample_start=None,
-        top_k=top_k,
+    ensemble = run_qlib_ensemble(
+        panel, top_k=top_k, num_models=5, num_boost_round=50, num_leaves=15, learning_rate=0.05,
     )
+    baseline_eval = evaluate_scores(baseline["scores"], panel, "forward_return_5d")
+    ensemble_eval = evaluate_scores(ensemble["scores"], panel, "forward_return_5d")
 
     candidates = []
     latest_date = None
-    if baseline.candidates:
-        latest_date, candidates = list(baseline.candidates.items())[-1]
+    if baseline["candidates"]:
+        latest_date, candidates = list(baseline["candidates"].items())[-1]
 
     decisions = {}
     verification = []
@@ -190,12 +183,12 @@ def run_phase9(panel, *, top_k: int = 3, seed: int = 42) -> dict:
             "end": panel["timestamp"].max().isoformat(),
         },
         "baseline": {
-            "rank_ic": baseline.factor_report["horizons"]["forward_return_5d"]["rank_ic_mean"],
-            "icir": baseline.factor_report["horizons"]["forward_return_5d"]["icir"],
+            "rank_ic": baseline_eval["rank_ic"],
+            "icir": baseline_eval["icir"],
         },
         "ensemble": {
-            "rank_ic": ensemble.factor_report["horizons"]["forward_return_5d"]["rank_ic_mean"],
-            "icir": ensemble.factor_report["horizons"]["forward_return_5d"]["icir"],
+            "rank_ic": ensemble_eval["rank_ic"],
+            "icir": ensemble_eval["icir"],
         },
         "candidates": list(candidates),
         "verification": verification,
