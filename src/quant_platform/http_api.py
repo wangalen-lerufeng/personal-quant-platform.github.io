@@ -29,7 +29,7 @@ from .market_data import InMemoryMarketDataFeed
 from .market_calendar import MarketCalendar
 from .market_state import classify_market_state
 from .order_features import analyze_order_flow
-from .phase9_service import build_tushare_etf_panel, run_phase9
+from .phase9_service import run_phase9_alpha158
 from .pipeline import TargetPosition, plan_orders, submit_to_simulation
 from .providers import AkshareForexProvider, TushareDatasetProvider, TushareProvider, TushareStockDailyProvider
 from .risk import RiskEngine, RiskLimits, RiskMonitor
@@ -207,8 +207,7 @@ def phase9_payload(payload: dict, control_plane, simulation_registry) -> dict:
     if not start_date:
         raise ValueError("start_date is required")
 
-    panel = build_tushare_etf_panel(symbols, start_date, end_date)
-    research = run_phase9(panel, top_k=top_k)
+    research = run_phase9_alpha158(symbols, start_date, end_date, top_k=top_k)
     risk_engine = control_plane.risk_engine if control_plane is not None else RiskEngine(RiskLimits())
     targets = [
         TargetPosition(symbol=item["symbol"], weight=item["weight"])

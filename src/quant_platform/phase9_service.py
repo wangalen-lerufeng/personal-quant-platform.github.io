@@ -10,6 +10,8 @@ no network I/O happen here; the HTTP layer (http_api.phase9_payload) adds the
 risk gate and paper submission.
 """
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 
@@ -18,6 +20,8 @@ from .pipeline import build_targets
 from .position_sizing import SizingCosts, build_states
 from .ppo_policy import train_ppo
 from .providers import TushareDatasetProvider
+from .qlib_alpha158 import run_alpha158
+from .qlib_dump import build_ohlcv_panel, dump_etf_to_qlib
 from .qlib_model import evaluate_scores, run_qlib_baseline, run_qlib_ensemble
 from .trading_agents import EvidenceItem, build_role_verdicts, synthesize_decision
 
@@ -134,6 +138,20 @@ def run_phase9(panel, *, top_k: int = 3, seed: int = 42) -> dict:
     if baseline["candidates"]:
         latest_date, candidates = list(baseline["candidates"].items())[-1]
 
+    final = _finalize(panel, candidates, latest_date, seed)
+
+    return {
+        "panel": _panel_summary(panel),
+        "baseline": {"rank_ic": baseline_eval["rank_ic"], "icir": baseline_eval["icir"]},
+        "ensemble": {"rank_ic": ensemble_eval["rank_ic"], "icir": ensemble_eval["icir"]},
+        **final,
+        "research_only": True,
+        "execution_enabled": False,
+    }
+
+
+def _finalize(panel, candidates, latest_date, seed) -> dict:
+    """Run verification, PPO sizing, and target building from a candidate pool."""
     decisions = {}
     verification = []
     if candidates:
@@ -174,26 +192,64 @@ def run_phase9(panel, *, top_k: int = 3, seed: int = 42) -> dict:
             adjustment = float(np.clip(policy.predict(state), 0.8, 1.2))
 
     targets = build_targets(candidates, decisions, adjustment=adjustment)
-
     return {
-        "panel": {
-            "rows": int(panel.shape[0]),
-            "symbols": int(panel["symbol"].nunique()),
-            "start": panel["timestamp"].min().isoformat(),
-            "end": panel["timestamp"].max().isoformat(),
-        },
-        "baseline": {
-            "rank_ic": baseline_eval["rank_ic"],
-            "icir": baseline_eval["icir"],
-        },
-        "ensemble": {
-            "rank_ic": ensemble_eval["rank_ic"],
-            "icir": ensemble_eval["icir"],
-        },
         "candidates": list(candidates),
         "verification": verification,
         "sizing": {"adjustment": adjustment},
         "targets": [{"symbol": target.symbol, "weight": target.weight} for target in targets],
+    }
+
+
+def _panel_summary(panel) -> dict:
+    return {
+        "rows": int(panel.shape[0]),
+        "symbols": int(panel["symbol"].nunique()),
+        "start": panel["timestamp"].min().isoformat(),
+        "end": panel["timestamp"].max().isoformat(),
+    }
+
+
+def run_phase9_alpha158(
+    symbols,
+    start_date,
+    end_date,
+    *,
+    top_k: int = 3,
+    seed: int = 42,
+    qlib_dir: str = "data/qlib_etf",
+) -> dict:
+    """Run the Phase 9 chain with Qlib's Alpha158 factors for the candidate pool."""
+    if top_k < 1:
+        raise ValueError("top_k must be at least 1")
+
+    ohlcv = build_ohlcv_panel(symbols, start_date, end_date)
+    qlib_dir = str(Path(qlib_dir).expanduser())
+    dump_etf_to_qlib(ohlcv, qlib_dir)
+
+    baseline = run_alpha158(
+        symbols, start_date, end_date, qlib_dir=qlib_dir, top_k=top_k,
+        num_boost_round=100, num_leaves=31, learning_rate=0.05,
+    )
+    ensemble = run_alpha158(
+        symbols, start_date, end_date, qlib_dir=qlib_dir, top_k=top_k,
+        model_type="ensemble", num_models=5, num_boost_round=50, num_leaves=31, learning_rate=0.05,
+    )
+
+    panel = build_tushare_etf_panel(symbols, start_date, end_date)
+    baseline_eval = evaluate_scores(baseline["scores"], panel, "forward_return_5d")
+    ensemble_eval = evaluate_scores(ensemble["scores"], panel, "forward_return_5d")
+
+    candidates = []
+    latest_date = None
+    if baseline["candidates"]:
+        latest_date, candidates = list(baseline["candidates"].items())[-1]
+
+    final = _finalize(panel, candidates, latest_date, seed)
+    return {
+        "panel": _panel_summary(panel),
+        "baseline": {"rank_ic": baseline_eval["rank_ic"], "icir": baseline_eval["icir"]},
+        "ensemble": {"rank_ic": ensemble_eval["rank_ic"], "icir": ensemble_eval["icir"]},
+        **final,
         "research_only": True,
         "execution_enabled": False,
     }

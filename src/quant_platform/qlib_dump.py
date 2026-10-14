@@ -1,0 +1,102 @@
+"""Dump ETF OHLCV data into Qlib's ``.bin`` format for the Alpha158 pipeline.
+
+Qlib's feature engine reads raw fields (open/high/low/close/vwap/volume/amount)
+from ``<instrument>/<field>.day.bin`` files. Each file is a little-endian
+float32 array: the first element is the instrument's start index in the global
+trading calendar, followed by the field values aligned to that calendar.
+"""
+
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+from .providers import TushareDatasetProvider
+
+FIELDS = ["open", "high", "low", "close", "vwap", "volume", "amount"]
+
+
+def init_qlib(provider_uri) -> None:
+    """Initialize Qlib, ending any previously-active experiment first."""
+    import qlib
+    from qlib.workflow import R
+
+    try:
+        R.end_exp()
+    except Exception:
+        pass
+    qlib.init(provider_uri=provider_uri, region="cn")
+
+
+def build_ohlcv_panel(symbols, start_date, end_date, token_env="TUSHARE_TOKEN") -> pd.DataFrame:
+    """Fetch OHLCV + amount from Tushare ``fund_daily`` and derive VWAP."""
+    symbols = [str(symbol).strip() for symbol in symbols if str(symbol).strip()]
+    if not symbols:
+        raise ValueError("symbols must be non-empty")
+    provider = TushareDatasetProvider(token_env)
+    rows = []
+    for symbol in symbols:
+        for record in provider.fetch_records("fund_daily", symbol, start_date, end_date):
+            close = record.get("close")
+            if close is None:
+                continue
+            close = float(close)
+            volume = float(record.get("vol") or 0.0)
+            amount = float(record.get("amount") or 0.0)
+            rows.append({
+                "symbol": symbol,
+                "date": str(record.get("trade_date", "")).replace("-", "")[:8],
+                "open": float(record.get("open") or close),
+                "high": float(record.get("high") or close),
+                "low": float(record.get("low") or close),
+                "close": close,
+                "vwap": amount / volume if volume > 0 else close,
+                "volume": volume,
+                "amount": amount,
+            })
+    if not rows:
+        raise ValueError("no Tushare fund_daily data returned")
+    return pd.DataFrame(rows)
+
+
+def dump_etf_to_qlib(frame: pd.DataFrame, qlib_dir) -> str:
+    """Write an OHLCV frame to Qlib's ``.bin`` format and return the dir path."""
+    qlib_dir = Path(qlib_dir).expanduser()
+    frame = frame.copy()
+    frame["date"] = pd.to_datetime(frame["date"])
+    calendar = sorted(frame["date"].unique())
+
+    calendars_dir = qlib_dir / "calendars"
+    instruments_dir = qlib_dir / "instruments"
+    features_dir = qlib_dir / "features"
+    calendars_dir.mkdir(parents=True, exist_ok=True)
+    instruments_dir.mkdir(parents=True, exist_ok=True)
+
+    with (calendars_dir / "day.txt").open("w", encoding="utf-8") as handle:
+        handle.write("\n".join(date.strftime("%Y-%m-%d") for date in calendar) + "\n")
+
+    instrument_lines = []
+    for symbol in sorted(frame["symbol"].unique()):
+        sub = frame[frame["symbol"] == symbol]
+        instrument_lines.append(
+            f"{symbol}\t{sub['date'].min().strftime('%Y-%m-%d')}\t{sub['date'].max().strftime('%Y-%m-%d')}"
+        )
+    with (instruments_dir / "all.txt").open("w", encoding="utf-8") as handle:
+        handle.write("\n".join(instrument_lines) + "\n")
+
+    for symbol in sorted(frame["symbol"].unique()):
+        sub = frame[frame["symbol"] == symbol].set_index("date")
+        first_date = sub.index.min()
+        last_date = sub.index.max()
+        cal_sub = [date for date in calendar if first_date <= date <= last_date]
+        aligned = sub.reindex(cal_sub)
+        date_index = calendar.index(first_date)
+
+        field_dir = features_dir / symbol.lower()
+        field_dir.mkdir(parents=True, exist_ok=True)
+        for field in FIELDS:
+            values = aligned[field].to_numpy(dtype="<f")
+            array = np.hstack([np.array([date_index], dtype="<f"), values]).astype("<f")
+            array.tofile(str(field_dir / f"{field}.day.bin"))
+
+    return str(qlib_dir)

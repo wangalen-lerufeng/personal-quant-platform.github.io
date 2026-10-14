@@ -1,0 +1,67 @@
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+import pandas as pd
+
+from quant_platform.qlib_dump import FIELDS, build_ohlcv_panel, dump_etf_to_qlib
+
+
+def _synthetic_frame(symbols, n_days=40):
+    dates = pd.bdate_range("2026-01-01", periods=n_days)
+    rows = []
+    for index, symbol in enumerate(symbols):
+        for day_index, date in enumerate(dates):
+            close = 4.0 * (index + 1) * (1 + 0.002 * day_index)
+            rows.append({
+                "symbol": symbol,
+                "date": date.strftime("%Y%m%d"),
+                "open": close * 0.99,
+                "high": close * 1.01,
+                "low": close * 0.98,
+                "close": close,
+                "vwap": close,
+                "volume": 1000.0,
+                "amount": 1e6,
+            })
+    return pd.DataFrame(rows)
+
+
+class BuildOhlcvPanelTests(unittest.TestCase):
+    def test_build_ohlcv_panel_maps_fields_and_vwap(self):
+        fake = [{
+            "trade_date": "20260105", "open": 10, "high": 11, "low": 9,
+            "close": 10.5, "vol": 1000, "amount": 20000,
+        }]
+        with patch("quant_platform.qlib_dump.TushareDatasetProvider") as MockProvider:
+            MockProvider.return_value.fetch_records.return_value = fake
+            frame = build_ohlcv_panel(["510300.SH"], "2026-01-01", "2026-01-10")
+        self.assertEqual(frame.iloc[0]["symbol"], "510300.SH")
+        self.assertAlmostEqual(frame.iloc[0]["vwap"], 20.0)
+
+
+class DumpEtfToQlibTests(unittest.TestCase):
+    def test_dump_produces_qlib_layout_and_is_readable(self):
+        from qlib.data import D
+
+        from quant_platform.qlib_dump import init_qlib
+
+        frame = _synthetic_frame(["510300.SH", "510500.SH"], n_days=40)
+        with tempfile.TemporaryDirectory() as tmp:
+            qlib_dir = dump_etf_to_qlib(frame, Path(tmp) / "qlib_data")
+            self.assertTrue((Path(qlib_dir) / "calendars" / "day.txt").exists())
+            self.assertTrue((Path(qlib_dir) / "instruments" / "all.txt").exists())
+            for field in FIELDS:
+                self.assertTrue(
+                    (Path(qlib_dir) / "features" / "510300.sh" / f"{field}.day.bin").exists()
+                )
+            init_qlib(qlib_dir)
+            data = D.features(
+                ["510300.SH"], ["$close"], start_time="2026-01-05", end_time="2026-01-15",
+            )
+            self.assertFalse(data.empty)
+
+
+if __name__ == "__main__":
+    unittest.main()

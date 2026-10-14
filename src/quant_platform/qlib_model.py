@@ -20,9 +20,9 @@ def _ensure_qlib_init():
     global _QLIB_INITIALIZED
     if _QLIB_INITIALIZED:
         return
-    import qlib
+    from .qlib_dump import init_qlib
 
-    qlib.init(provider_uri="", region="cn")
+    init_qlib("")
     _QLIB_INITIALIZED = True
 
 
