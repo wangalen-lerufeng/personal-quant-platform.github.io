@@ -57,7 +57,7 @@ def build_ohlcv_panel(symbols, start_date, end_date, token_env="TUSHARE_TOKEN", 
     symbols = [str(symbol).strip() for symbol in symbols if str(symbol).strip()]
     if not symbols:
         raise ValueError("symbols must be non-empty")
-    daily_dataset = "fund_daily" if asset_class == "etf" else "daily"
+    daily_dataset = "fund_daily" if asset_class == "etf" else ("hk_daily" if asset_class == "hk" else "daily")
     provider = TushareDatasetProvider(token_env)
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         results = list(executor.map(

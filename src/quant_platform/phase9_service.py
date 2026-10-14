@@ -72,25 +72,30 @@ def _fetch_symbol_daily_adj(symbol, provider, daily_dataset, adj_dataset, start_
             "volume": float(row.get("vol") or 0.0),
             "amount": float(row.get("amount") or 0.0),
         })
-    for row in provider.fetch_records(adj_dataset, symbol, start_date, end_date):
-        adj_rows.append({
-            "symbol": symbol,
-            "trade_date": str(row.get("trade_date", "")).replace("-", "")[:8],
-            "adj_factor": float(row["adj_factor"]),
-        })
+    if adj_dataset is not None:
+        for row in provider.fetch_records(adj_dataset, symbol, start_date, end_date):
+            adj_rows.append({
+                "symbol": symbol,
+                "trade_date": str(row.get("trade_date", "")).replace("-", "")[:8],
+                "adj_factor": float(row["adj_factor"]),
+            })
     return daily_rows, adj_rows
 
 
 def build_tushare_etf_panel(symbols, start_date, end_date, token_env="TUSHARE_TOKEN", asset_class="etf", max_workers=4) -> pd.DataFrame:
-    """Fetch daily + adjustment data from Tushare (ETF or stock) and build a panel."""
+    """Fetch daily + adjustment data from Tushare (ETF/stock/HK) and build a panel."""
     symbols = [str(symbol).strip() for symbol in symbols if str(symbol).strip()]
     if len(symbols) < 2:
         raise ValueError("at least two symbols are required")
     if not start_date or not end_date:
         raise ValueError("start_date and end_date are required")
 
-    daily_dataset = "fund_daily" if asset_class == "etf" else "daily"
-    adj_dataset = "fund_adj" if asset_class == "etf" else "adj_factor"
+    if asset_class == "etf":
+        daily_dataset, adj_dataset = "fund_daily", "fund_adj"
+    elif asset_class == "hk":
+        daily_dataset, adj_dataset = "hk_daily", None
+    else:
+        daily_dataset, adj_dataset = "daily", "adj_factor"
     provider = TushareDatasetProvider(token_env)
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         results = list(executor.map(

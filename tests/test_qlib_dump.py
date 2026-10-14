@@ -55,6 +55,20 @@ class BuildOhlcvPanelTests(unittest.TestCase):
         self.assertIn("daily", datasets)
         self.assertNotIn("fund_daily", datasets)
 
+    def test_build_ohlcv_panel_hk_uses_hk_daily_dataset(self):
+        fake = [{
+            "trade_date": "20260105", "open": 10, "high": 11, "low": 9,
+            "close": 10.5, "vol": 1000, "amount": 20000,
+        }]
+        with patch("quant_platform.qlib_dump.TushareDatasetProvider") as MockProvider:
+            MockProvider.return_value.fetch_records.return_value = fake
+            build_ohlcv_panel(
+                ["00700.HK", "09988.HK"], "2026-01-01", "2026-01-10", asset_class="hk",
+            )
+            datasets = {call.args[0] for call in MockProvider.return_value.fetch_records.call_args_list}
+        self.assertIn("hk_daily", datasets)
+        self.assertNotIn("daily", datasets)
+
 
 class FetchIndexConstituentsTests(unittest.TestCase):
     def test_returns_latest_date_codes(self):
