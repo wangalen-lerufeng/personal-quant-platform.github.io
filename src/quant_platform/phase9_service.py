@@ -118,7 +118,7 @@ def build_tushare_etf_panel(symbols, start_date, end_date, token_env="TUSHARE_TO
             "adj_factor": 1.0,
         })
     basics = [{"ts_code": symbol, "list_status": "L"} for symbol in symbols]
-    return build_etf_panel(daily, adj_factors, basics=basics, horizons=(5,))
+    return build_etf_panel(daily, adj_factors, basics=basics, horizons=(1,))
 
 
 def _verification_evidence(panel, symbol, as_of, flag_volatile):
@@ -238,8 +238,9 @@ def run_phase9_alpha158(
     seed: int = 42,
     qlib_dir: str = "data/qlib_etf",
     asset_class: str = "etf",
+    feature_expressions=None,
 ) -> dict:
-    """Run the Phase 9 chain with Qlib's Alpha158 factors for the candidate pool."""
+    """Run the Phase 9 chain with Qlib's Alpha158 (or custom) factors for the candidate pool."""
     if top_k < 1:
         raise ValueError("top_k must be at least 1")
 
@@ -250,15 +251,17 @@ def run_phase9_alpha158(
     baseline = run_alpha158(
         symbols, start_date, end_date, qlib_dir=qlib_dir, top_k=top_k,
         num_boost_round=100, num_leaves=31, learning_rate=0.05,
+        feature_expressions=feature_expressions,
     )
     ensemble = run_alpha158(
         symbols, start_date, end_date, qlib_dir=qlib_dir, top_k=top_k,
         model_type="ensemble", num_models=5, num_boost_round=50, num_leaves=31, learning_rate=0.05,
+        feature_expressions=feature_expressions,
     )
 
     panel = build_tushare_etf_panel(symbols, start_date, end_date, asset_class=asset_class)
-    baseline_eval = evaluate_scores(baseline["scores"], panel, "forward_return_5d")
-    ensemble_eval = evaluate_scores(ensemble["scores"], panel, "forward_return_5d")
+    baseline_eval = evaluate_scores(baseline["scores"], panel, "forward_return_1d")
+    ensemble_eval = evaluate_scores(ensemble["scores"], panel, "forward_return_1d")
 
     candidates = []
     latest_date = None

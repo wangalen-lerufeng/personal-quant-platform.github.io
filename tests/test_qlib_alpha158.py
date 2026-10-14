@@ -45,6 +45,18 @@ class Alpha158Tests(unittest.TestCase):
         self.assertTrue(result["candidates"])
         self.assertTrue(all(len(symbols) <= 3 for symbols in result["candidates"].values()))
 
+    def test_run_alpha158_with_custom_factor_expressions(self):
+        frame = _synthetic_frame(SYMBOLS, n_days=200)
+        with tempfile.TemporaryDirectory() as tmp:
+            qlib_dir = dump_etf_to_qlib(frame, Path(tmp) / "qlib_data")
+            result = run_alpha158(
+                SYMBOLS, "2024-01-01", "2024-10-01", qlib_dir=qlib_dir, top_k=3,
+                num_boost_round=20, num_leaves=15, learning_rate=0.05,
+                feature_expressions=["Ref($close, 1)/$close - 1", "Mean($close, 20)/$close"],
+            )
+        self.assertFalse(result["scores"].empty)
+        self.assertTrue(result["candidates"])
+
 
 if __name__ == "__main__":
     unittest.main()

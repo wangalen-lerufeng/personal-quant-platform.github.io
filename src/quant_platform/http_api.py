@@ -215,8 +215,15 @@ def phase9_payload(payload: dict, control_plane, simulation_registry, config=Non
     if not isinstance(symbols, list) or not symbols:
         raise ValueError("symbols must be a non-empty list")
 
+    feature_expressions = payload.get("feature_expressions", [])
+    if isinstance(feature_expressions, str):
+        feature_expressions = [
+            item.strip() for item in feature_expressions.replace("\n", ",").split(",") if item.strip()
+        ]
+
     research = run_phase9_alpha158(
         symbols, start_date, end_date, top_k=top_k, asset_class=asset_class,
+        feature_expressions=feature_expressions or None,
     )
     risk_engine = control_plane.risk_engine if control_plane is not None else RiskEngine(RiskLimits())
     targets = [

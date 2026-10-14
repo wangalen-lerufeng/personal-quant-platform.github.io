@@ -41,7 +41,7 @@ class BuildTusharePanelTests(unittest.TestCase):
                 ["510300.SH", "510500.SH"], "2026-01-05", "2026-01-09",
             )
         self.assertIn("adj_close", panel.columns)
-        self.assertIn("forward_return_5d", panel.columns)
+        self.assertIn("forward_return_1d", panel.columns)
         self.assertEqual(panel["symbol"].nunique(), 2)
 
     def test_build_tushare_etf_panel_requires_dates(self):
