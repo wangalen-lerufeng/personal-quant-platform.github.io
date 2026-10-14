@@ -40,6 +40,20 @@ class BuildOhlcvPanelTests(unittest.TestCase):
         self.assertEqual(frame.iloc[0]["symbol"], "510300.SH")
         self.assertAlmostEqual(frame.iloc[0]["vwap"], 20.0)
 
+    def test_build_ohlcv_panel_stock_uses_daily_dataset(self):
+        fake = [{
+            "trade_date": "20260105", "open": 10, "high": 11, "low": 9,
+            "close": 10.5, "vol": 1000, "amount": 20000,
+        }]
+        with patch("quant_platform.qlib_dump.TushareDatasetProvider") as MockProvider:
+            MockProvider.return_value.fetch_records.return_value = fake
+            build_ohlcv_panel(
+                ["600519.SH", "000001.SZ"], "2026-01-01", "2026-01-10", asset_class="stock",
+            )
+            datasets = {call.args[0] for call in MockProvider.return_value.fetch_records.call_args_list}
+        self.assertIn("daily", datasets)
+        self.assertNotIn("fund_daily", datasets)
+
 
 class DumpEtfToQlibTests(unittest.TestCase):
     def test_dump_produces_qlib_layout_and_is_readable(self):

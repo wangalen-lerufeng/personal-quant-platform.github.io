@@ -204,10 +204,13 @@ def phase9_payload(payload: dict, control_plane, simulation_registry) -> dict:
     top_k = int(payload.get("top_k", 3))
     start_date = str(payload.get("start_date", "")).strip()
     end_date = str(payload.get("end_date", "")).strip() or date.today().isoformat()
+    asset_class = str(payload.get("asset_class", "etf")).strip().lower() or "etf"
     if not start_date:
         raise ValueError("start_date is required")
 
-    research = run_phase9_alpha158(symbols, start_date, end_date, top_k=top_k)
+    research = run_phase9_alpha158(
+        symbols, start_date, end_date, top_k=top_k, asset_class=asset_class,
+    )
     risk_engine = control_plane.risk_engine if control_plane is not None else RiskEngine(RiskLimits())
     targets = [
         TargetPosition(symbol=item["symbol"], weight=item["weight"])

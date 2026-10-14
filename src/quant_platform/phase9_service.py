@@ -59,18 +59,20 @@ def synthetic_etf_panel(symbols, n_days: int = 120) -> pd.DataFrame:
     )
 
 
-def build_tushare_etf_panel(symbols, start_date, end_date, token_env="TUSHARE_TOKEN") -> pd.DataFrame:
-    """Fetch real ETF daily + adjustment data from Tushare and build a panel."""
+def build_tushare_etf_panel(symbols, start_date, end_date, token_env="TUSHARE_TOKEN", asset_class="etf") -> pd.DataFrame:
+    """Fetch daily + adjustment data from Tushare (ETF or stock) and build a panel."""
     symbols = [str(symbol).strip() for symbol in symbols if str(symbol).strip()]
     if len(symbols) < 2:
         raise ValueError("at least two symbols are required")
     if not start_date or not end_date:
         raise ValueError("start_date and end_date are required")
 
+    daily_dataset = "fund_daily" if asset_class == "etf" else "daily"
+    adj_dataset = "fund_adj" if asset_class == "etf" else "adj_factor"
     provider = TushareDatasetProvider(token_env)
     daily_rows, adj_rows = [], []
     for symbol in symbols:
-        for row in provider.fetch_records("fund_daily", symbol, start_date, end_date):
+        for row in provider.fetch_records(daily_dataset, symbol, start_date, end_date):
             if row.get("close") is None:
                 continue
             daily_rows.append({
@@ -80,14 +82,14 @@ def build_tushare_etf_panel(symbols, start_date, end_date, token_env="TUSHARE_TO
                 "volume": float(row.get("vol") or 0.0),
                 "amount": float(row.get("amount") or 0.0),
             })
-        for row in provider.fetch_records("fund_adj", symbol, start_date, end_date):
+        for row in provider.fetch_records(adj_dataset, symbol, start_date, end_date):
             adj_rows.append({
                 "symbol": symbol,
                 "trade_date": str(row.get("trade_date", "")).replace("-", "")[:8],
                 "adj_factor": float(row["adj_factor"]),
             })
     if not daily_rows:
-        raise ValueError("no Tushare fund_daily data returned for the given symbols and dates")
+        raise ValueError(f"no Tushare {daily_dataset} data returned for the given symbols and dates")
 
     daily = pd.DataFrame(daily_rows)
     adj_factors = pd.DataFrame(adj_rows)
@@ -217,12 +219,13 @@ def run_phase9_alpha158(
     top_k: int = 3,
     seed: int = 42,
     qlib_dir: str = "data/qlib_etf",
+    asset_class: str = "etf",
 ) -> dict:
     """Run the Phase 9 chain with Qlib's Alpha158 factors for the candidate pool."""
     if top_k < 1:
         raise ValueError("top_k must be at least 1")
 
-    ohlcv = build_ohlcv_panel(symbols, start_date, end_date)
+    ohlcv = build_ohlcv_panel(symbols, start_date, end_date, asset_class=asset_class)
     qlib_dir = str(Path(qlib_dir).expanduser())
     dump_etf_to_qlib(ohlcv, qlib_dir)
 
@@ -235,7 +238,7 @@ def run_phase9_alpha158(
         model_type="ensemble", num_models=5, num_boost_round=50, num_leaves=31, learning_rate=0.05,
     )
 
-    panel = build_tushare_etf_panel(symbols, start_date, end_date)
+    panel = build_tushare_etf_panel(symbols, start_date, end_date, asset_class=asset_class)
     baseline_eval = evaluate_scores(baseline["scores"], panel, "forward_return_5d")
     ensemble_eval = evaluate_scores(ensemble["scores"], panel, "forward_return_5d")
 

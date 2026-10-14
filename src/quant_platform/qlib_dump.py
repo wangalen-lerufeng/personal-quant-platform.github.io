@@ -28,15 +28,16 @@ def init_qlib(provider_uri) -> None:
     qlib.init(provider_uri=provider_uri, region="cn")
 
 
-def build_ohlcv_panel(symbols, start_date, end_date, token_env="TUSHARE_TOKEN") -> pd.DataFrame:
-    """Fetch OHLCV + amount from Tushare ``fund_daily`` and derive VWAP."""
+def build_ohlcv_panel(symbols, start_date, end_date, token_env="TUSHARE_TOKEN", asset_class="etf") -> pd.DataFrame:
+    """Fetch OHLCV + amount from Tushare (``fund_daily`` or ``daily``) and derive VWAP."""
     symbols = [str(symbol).strip() for symbol in symbols if str(symbol).strip()]
     if not symbols:
         raise ValueError("symbols must be non-empty")
+    daily_dataset = "fund_daily" if asset_class == "etf" else "daily"
     provider = TushareDatasetProvider(token_env)
     rows = []
     for symbol in symbols:
-        for record in provider.fetch_records("fund_daily", symbol, start_date, end_date):
+        for record in provider.fetch_records(daily_dataset, symbol, start_date, end_date):
             close = record.get("close")
             if close is None:
                 continue
