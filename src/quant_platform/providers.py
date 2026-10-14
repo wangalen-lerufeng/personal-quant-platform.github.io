@@ -210,7 +210,12 @@ class TushareDatasetProvider:
             arguments = {"ts_code": symbol, "market": "E"}
         else:
             arguments = {"ts_code": symbol, **dates}
-        frame = method(**arguments)
+        try:
+            frame = method(**arguments)
+        except requests.RequestException as error:
+            raise RuntimeError(
+                f"Tushare {dataset} 请求失败（网络/代理超时）: {error}"
+            ) from error
         if frame is None or frame.empty:
             return []
         # Pandas/numpy scalar values are normalized before JSON serialization.
