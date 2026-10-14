@@ -196,8 +196,8 @@ def live_readiness_payload(payload: dict) -> dict:
     ).assess(evidence)
 
 
-def phase9_payload(payload: dict, control_plane, simulation_registry) -> dict:
-    """Run the Phase 9 pipeline on Tushare data, risk-gate, and submit to paper."""
+def phase9_payload(payload: dict, control_plane, simulation_registry, config=None) -> dict:
+    """Run the Phase 9 pipeline, risk-gate, submit to paper, and add an LLM analysis."""
     symbols = payload.get("symbols", [])
     top_k = int(payload.get("top_k", 3))
     start_date = str(payload.get("start_date", "")).strip()
@@ -232,7 +232,7 @@ def phase9_payload(payload: dict, control_plane, simulation_registry) -> dict:
         session = simulation_registry.create(account_id, initial_cash=1_000_000.0)
     submission = submit_to_simulation(plan, session)
 
-    return {
+    result = {
         **research,
         "orders": [{"symbol": order.symbol, "side": order.side.value, "quantity": order.quantity} for order in plan.orders],
         "rejected": [dict(item) for item in plan.rejected],
@@ -241,6 +241,65 @@ def phase9_payload(payload: dict, control_plane, simulation_registry) -> dict:
         "paper_only": True,
         "execution_enabled": False,
     }
+    result["llm_analysis"] = (
+        _phase9_llm_analysis(result, config)
+        if config is not None and config.ai_model_enabled
+        else None
+    )
+    return result
+
+
+def _build_phase9_analysis_prompt(result: dict) -> str:
+    panel = result.get("panel", {})
+    baseline = result.get("baseline", {})
+    ensemble = result.get("ensemble", {})
+    candidates = result.get("candidates", [])
+    verification = result.get("verification", [])
+    sizing = result.get("sizing", {})
+    targets = result.get("targets", [])
+
+    def fmt(value):
+        return "—" if value is None else f"{value:.4f}"
+
+    lines = [
+        "你是一名量化投资研究助手。以下是平台自动跑出的「组合研究」流水线结果，请用中文做一份客观、结构化的投资解读。",
+        "注意：这些是研究/纸面结果，不构成投资建议；只基于下面给出的数据解读，不要编造任何数字。",
+        "",
+        f"1. 数据面板：{panel.get('rows', '?')} 行 × {panel.get('symbols', '?')} 只，区间 {panel.get('start', '?')} ~ {panel.get('end', '?')}。",
+        f"2. 候选池模型样本外表现：LightGBM Rank IC={fmt(baseline.get('rank_ic'))} ICIR={fmt(baseline.get('icir'))}；DoubleEnsemble Rank IC={fmt(ensemble.get('rank_ic'))} ICIR={fmt(ensemble.get('icir'))}。",
+        f"3. 最新候选池：{'、'.join(candidates) if candidates else '无'}。",
+    ]
+    for item in verification:
+        tags = "、".join(item.get("risk_tags", [])) or "无"
+        lines.append(f"   - {item.get('symbol')}：验真 {item.get('verdict')}（风险标签：{tags}）")
+    target_str = "无"
+    if targets:
+        target_str = "、".join(f"{t['symbol']}:{t['weight']:.4f}" for t in targets)
+    lines.append(f"4. PPO 调整因子：{fmt(sizing.get('adjustment'))}。")
+    lines.append(f"5. 目标仓位：{target_str}。")
+    lines.append(
+        f"6. 风控订单：{len(result.get('orders', []))} 笔、拒绝 {len(result.get('rejected', []))} 笔；"
+        f"纸面提交 {result.get('submission', {}).get('order_count', 0)} 笔。"
+    )
+    lines.append("")
+    lines.append("请分三段输出：A. 组合整体解读；B. 各候选标的简要点评；C. 风险提示与局限（尤其 IC 稳定性、样本规模、真实执行已关闭）。")
+    return "\n".join(lines)
+
+
+def _phase9_llm_analysis(result: dict, config) -> str | None:
+    try:
+        prompt = _build_phase9_analysis_prompt(result)
+        client = OpenAICompatibleChatClient(
+            config.ai_base_url,
+            config.ai_model,
+            config.ai_api_key_env,
+            config.ai_temperature,
+            config.ai_max_tokens,
+            config.ai_timeout_seconds,
+        )
+        return client.complete(prompt)
+    except Exception as error:
+        return f"[大模型解读失败] {error}"
 
 
 def simulation_create_payload(payload: dict, registry: PaperSimulationRegistry) -> dict:
@@ -996,6 +1055,7 @@ def make_handler(
                         json.loads(self.rfile.read(length)),
                         control_plane,
                         simulation_registry,
+                        config,
                     )
                     status = 200
                 except (
