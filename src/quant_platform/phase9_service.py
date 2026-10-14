@@ -10,6 +10,7 @@ no network I/O happen here; the HTTP layer (http_api.phase9_payload) adds the
 risk gate and paper submission.
 """
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -59,7 +60,28 @@ def synthetic_etf_panel(symbols, n_days: int = 120) -> pd.DataFrame:
     )
 
 
-def build_tushare_etf_panel(symbols, start_date, end_date, token_env="TUSHARE_TOKEN", asset_class="etf") -> pd.DataFrame:
+def _fetch_symbol_daily_adj(symbol, provider, daily_dataset, adj_dataset, start_date, end_date):
+    daily_rows, adj_rows = [], []
+    for row in provider.fetch_records(daily_dataset, symbol, start_date, end_date):
+        if row.get("close") is None:
+            continue
+        daily_rows.append({
+            "symbol": symbol,
+            "trade_date": str(row.get("trade_date", "")).replace("-", "")[:8],
+            "close": float(row["close"]),
+            "volume": float(row.get("vol") or 0.0),
+            "amount": float(row.get("amount") or 0.0),
+        })
+    for row in provider.fetch_records(adj_dataset, symbol, start_date, end_date):
+        adj_rows.append({
+            "symbol": symbol,
+            "trade_date": str(row.get("trade_date", "")).replace("-", "")[:8],
+            "adj_factor": float(row["adj_factor"]),
+        })
+    return daily_rows, adj_rows
+
+
+def build_tushare_etf_panel(symbols, start_date, end_date, token_env="TUSHARE_TOKEN", asset_class="etf", max_workers=4) -> pd.DataFrame:
     """Fetch daily + adjustment data from Tushare (ETF or stock) and build a panel."""
     symbols = [str(symbol).strip() for symbol in symbols if str(symbol).strip()]
     if len(symbols) < 2:
@@ -70,24 +92,15 @@ def build_tushare_etf_panel(symbols, start_date, end_date, token_env="TUSHARE_TO
     daily_dataset = "fund_daily" if asset_class == "etf" else "daily"
     adj_dataset = "fund_adj" if asset_class == "etf" else "adj_factor"
     provider = TushareDatasetProvider(token_env)
-    daily_rows, adj_rows = [], []
-    for symbol in symbols:
-        for row in provider.fetch_records(daily_dataset, symbol, start_date, end_date):
-            if row.get("close") is None:
-                continue
-            daily_rows.append({
-                "symbol": symbol,
-                "trade_date": str(row.get("trade_date", "")).replace("-", "")[:8],
-                "close": float(row["close"]),
-                "volume": float(row.get("vol") or 0.0),
-                "amount": float(row.get("amount") or 0.0),
-            })
-        for row in provider.fetch_records(adj_dataset, symbol, start_date, end_date):
-            adj_rows.append({
-                "symbol": symbol,
-                "trade_date": str(row.get("trade_date", "")).replace("-", "")[:8],
-                "adj_factor": float(row["adj_factor"]),
-            })
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        results = list(executor.map(
+            lambda symbol: _fetch_symbol_daily_adj(
+                symbol, provider, daily_dataset, adj_dataset, start_date, end_date
+            ),
+            symbols,
+        ))
+    daily_rows = [row for daily, _adj in results for row in daily]
+    adj_rows = [row for _daily, adj in results for row in adj]
     if not daily_rows:
         raise ValueError(f"no Tushare {daily_dataset} data returned for the given symbols and dates")
 

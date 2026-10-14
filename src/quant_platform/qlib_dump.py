@@ -6,6 +6,7 @@ float32 array: the first element is the instrument's start index in the global
 trading calendar, followed by the field values aligned to that calendar.
 """
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -28,35 +29,44 @@ def init_qlib(provider_uri) -> None:
     qlib.init(provider_uri=provider_uri, region="cn")
 
 
-def build_ohlcv_panel(symbols, start_date, end_date, token_env="TUSHARE_TOKEN", asset_class="etf") -> pd.DataFrame:
+def _fetch_symbol_ohlcv(symbol, provider, daily_dataset, start_date, end_date):
+    rows = []
+    for record in provider.fetch_records(daily_dataset, symbol, start_date, end_date):
+        close = record.get("close")
+        if close is None:
+            continue
+        close = float(close)
+        volume = float(record.get("vol") or 0.0)
+        amount = float(record.get("amount") or 0.0)
+        rows.append({
+            "symbol": symbol,
+            "date": str(record.get("trade_date", "")).replace("-", "")[:8],
+            "open": float(record.get("open") or close),
+            "high": float(record.get("high") or close),
+            "low": float(record.get("low") or close),
+            "close": close,
+            "vwap": amount / volume if volume > 0 else close,
+            "volume": volume,
+            "amount": amount,
+        })
+    return rows
+
+
+def build_ohlcv_panel(symbols, start_date, end_date, token_env="TUSHARE_TOKEN", asset_class="etf", max_workers=4) -> pd.DataFrame:
     """Fetch OHLCV + amount from Tushare (``fund_daily`` or ``daily``) and derive VWAP."""
     symbols = [str(symbol).strip() for symbol in symbols if str(symbol).strip()]
     if not symbols:
         raise ValueError("symbols must be non-empty")
     daily_dataset = "fund_daily" if asset_class == "etf" else "daily"
     provider = TushareDatasetProvider(token_env)
-    rows = []
-    for symbol in symbols:
-        for record in provider.fetch_records(daily_dataset, symbol, start_date, end_date):
-            close = record.get("close")
-            if close is None:
-                continue
-            close = float(close)
-            volume = float(record.get("vol") or 0.0)
-            amount = float(record.get("amount") or 0.0)
-            rows.append({
-                "symbol": symbol,
-                "date": str(record.get("trade_date", "")).replace("-", "")[:8],
-                "open": float(record.get("open") or close),
-                "high": float(record.get("high") or close),
-                "low": float(record.get("low") or close),
-                "close": close,
-                "vwap": amount / volume if volume > 0 else close,
-                "volume": volume,
-                "amount": amount,
-            })
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        results = list(executor.map(
+            lambda symbol: _fetch_symbol_ohlcv(symbol, provider, daily_dataset, start_date, end_date),
+            symbols,
+        ))
+    rows = [row for sublist in results for row in sublist]
     if not rows:
-        raise ValueError("no Tushare fund_daily data returned")
+        raise ValueError(f"no Tushare {daily_dataset} data returned")
     return pd.DataFrame(rows)
 
 

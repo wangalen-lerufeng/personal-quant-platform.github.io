@@ -1,5 +1,5 @@
 """Optional online market-data providers."""
-from datetime import datetime
+from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from http.client import IncompleteRead
 import os
@@ -187,6 +187,7 @@ class TushareDatasetProvider:
         "fund_share",
         "fund_daily",
         "daily",
+        "index_weight",
     }
 
     def __init__(self, token_env: str = "TUSHARE_TOKEN"):
@@ -208,17 +209,44 @@ class TushareDatasetProvider:
             arguments = {"ts_code": symbol}
         elif dataset == "fund_basic":
             arguments = {"ts_code": symbol, "market": "E"}
+        elif dataset == "index_weight":
+            arguments = {"index_code": symbol, **dates}
         else:
             arguments = {"ts_code": symbol, **dates}
-        try:
-            frame = method(**arguments)
-        except requests.RequestException as error:
-            raise RuntimeError(
-                f"Tushare {dataset} 请求失败（网络/代理超时）: {error}"
-            ) from error
+        for attempt in range(3):
+            try:
+                frame = method(**arguments)
+                break
+            except Exception as error:
+                message = str(error)
+                if "频率超限" in message or "超限" in message:
+                    if attempt == 2:
+                        raise RuntimeError(
+                            f"Tushare {dataset} 请求频率超限（300次/分钟），请缩小股票池或稍后重试: {message}"
+                        ) from error
+                    time.sleep(20)
+                else:
+                    raise RuntimeError(f"Tushare {dataset} 请求失败: {message}") from error
         if frame is None or frame.empty:
             return []
         # Pandas/numpy scalar values are normalized before JSON serialization.
         import json
 
         return json.loads(frame.to_json(orient="records", date_format="iso", force_ascii=False))
+
+    def fetch_index_constituents(self, index_code, end_date, lookback_days: int = 30) -> list[str]:
+        """Return the constituent stock codes of an index on the latest available date."""
+        start = (datetime.strptime(end_date, "%Y-%m-%d") - timedelta(days=lookback_days)).strftime(
+            "%Y-%m-%d"
+        )
+        rows = self.fetch_records("index_weight", index_code, start, end_date)
+        if not rows:
+            return []
+        latest = max(str(row["trade_date"]).replace("-", "") for row in rows)
+        return sorted(
+            {
+                str(row["con_code"])
+                for row in rows
+                if str(row["trade_date"]).replace("-", "") == latest
+            }
+        )

@@ -199,14 +199,21 @@ def live_readiness_payload(payload: dict) -> dict:
 def phase9_payload(payload: dict, control_plane, simulation_registry) -> dict:
     """Run the Phase 9 pipeline on Tushare data, risk-gate, and submit to paper."""
     symbols = payload.get("symbols", [])
-    if not isinstance(symbols, list) or not symbols:
-        raise ValueError("symbols must be a non-empty list")
     top_k = int(payload.get("top_k", 3))
     start_date = str(payload.get("start_date", "")).strip()
     end_date = str(payload.get("end_date", "")).strip() or date.today().isoformat()
     asset_class = str(payload.get("asset_class", "etf")).strip().lower() or "etf"
     if not start_date:
         raise ValueError("start_date is required")
+
+    index_code = str(payload.get("index_code", "")).strip()
+    if index_code and index_code != "manual":
+        symbols = TushareDatasetProvider("TUSHARE_TOKEN").fetch_index_constituents(index_code, end_date)
+        if len(symbols) < 2:
+            raise ValueError(f"指数 {index_code} 未取到成分股，请确认指数代码与日期")
+
+    if not isinstance(symbols, list) or not symbols:
+        raise ValueError("symbols must be a non-empty list")
 
     research = run_phase9_alpha158(
         symbols, start_date, end_date, top_k=top_k, asset_class=asset_class,

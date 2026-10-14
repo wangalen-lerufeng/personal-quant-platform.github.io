@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import pandas as pd
 
+from quant_platform.providers import TushareDatasetProvider
 from quant_platform.qlib_dump import FIELDS, build_ohlcv_panel, dump_etf_to_qlib
 
 
@@ -53,6 +54,20 @@ class BuildOhlcvPanelTests(unittest.TestCase):
             datasets = {call.args[0] for call in MockProvider.return_value.fetch_records.call_args_list}
         self.assertIn("daily", datasets)
         self.assertNotIn("fund_daily", datasets)
+
+
+class FetchIndexConstituentsTests(unittest.TestCase):
+    def test_returns_latest_date_codes(self):
+        fake = [
+            {"trade_date": "20260105", "con_code": "600519.SH"},
+            {"trade_date": "20260105", "con_code": "000001.SZ"},
+            {"trade_date": "20260106", "con_code": "600519.SH"},
+            {"trade_date": "20260106", "con_code": "000002.SZ"},
+        ]
+        with patch("quant_platform.providers.TushareDatasetProvider.fetch_records", return_value=fake):
+            provider = TushareDatasetProvider()
+            codes = provider.fetch_index_constituents("000300.SH", "2026-01-10")
+        self.assertEqual(codes, ["000002.SZ", "600519.SH"])
 
 
 class DumpEtfToQlibTests(unittest.TestCase):
