@@ -292,6 +292,15 @@ Sum(Greater($close-Ref($close,1), 0), 14)/(Sum(Abs($close-Ref($close,1)), 14)+1e
         if (result.deleted_account) alert(`已删除记录及其仿真账户：${result.deleted_account}`);
       } catch (error) { alert(error.message); }
     }
+    function jumpToAccount(accountId) {
+      location.hash = 'simulation';
+      activatePage('simulation');
+      loadPortfolioAccounts().then(() => {
+        const sel = $('portfolioAccountId');
+        if (sel && [...sel.options].some(o => o.value === accountId)) sel.value = accountId;
+        runPortfolioReport();
+      });
+    }
     function renderRunHistory(runs) {
       if (!runs || !runs.length) return '<pre style="margin:0;font-family:inherit">暂无运行历史。跑一次「组合研究流水线」或「前向验证」后这里会记录。</pre>';
       let html = '';
@@ -313,7 +322,8 @@ Sum(Greater($close-Ref($close,1), 0), 14)/(Sum(Abs($close-Ref($close,1)), 14)+1e
           html += `<tr><td style="padding:5px 8px;border-bottom:1px solid var(--line);color:var(--muted);vertical-align:top">风险</td><td style="padding:5px 8px;border-bottom:1px solid var(--line)">最大回撤 ${fmtPct(b.max_drawdown)} · 年化波动 ${fmtPct(b.annualized_volatility)} · 夏普 ${fmtNum(b.sharpe, 2)} · 信息比率 ${fmtNum(b.information_ratio, 2)}</td></tr>`;
           html += `<tr><td style="padding:5px 8px;border-bottom:1px solid var(--line);color:var(--muted);vertical-align:top">因子</td><td style="padding:5px 8px;border-bottom:1px solid var(--line)"><pre style="margin:0;white-space:pre-wrap;font-family:ui-monospace,SFMono-Regular,monospace;font-size:11px;color:var(--muted)">${esc(factorText)}</pre></td></tr>`;
           html += `<tr><td style="padding:5px 8px;border-bottom:1px solid var(--line);color:var(--muted);vertical-align:top">候选</td><td style="padding:5px 8px;border-bottom:1px solid var(--line)">${esc((r.candidates || []).join(', ') || '无')} · 目标仓位 ${esc((r.targets || []).map(t => t.symbol + ':' + t.weight.toFixed(4)).join(', ') || '无')}</td></tr>`;
-          html += `<tr><td style="padding:5px 8px;color:var(--muted);vertical-align:top">下单</td><td style="padding:5px 8px">${(r.orders || []).length} 笔（账户 ${esc(r.account_id || '—')}）</td></tr>`;
+          const accountLink = r.account_id ? `<a href="javascript:void(0)" onclick="jumpToAccount('${esc(r.account_id)}')" style="color:var(--blue);text-decoration:underline;cursor:pointer" title="跳转到该仿真账户">${esc(r.account_id)}</a>` : '—';
+          html += `<tr><td style="padding:5px 8px;color:var(--muted);vertical-align:top">下单</td><td style="padding:5px 8px">${(r.orders || []).length} 笔（账户 ${accountLink}）</td></tr>`;
           html += '</tbody></table>';
         } else {
           const m = r.metrics || {};
