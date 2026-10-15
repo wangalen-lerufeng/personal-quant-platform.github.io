@@ -196,25 +196,39 @@ Sum(Greater($close-Ref($close,1), 0), 14)/(Sum(Abs($close-Ref($close,1)), 14)+1e
       return html;
     }
     function renderAccountReport(r) {
-      const card = (k, v, neg) => `<div class="metric-card"><div class="k">${k}</div><div class="v${neg ? ' neg' : ''}">${v}</div></div>`;
-      let html = '<div class="metrics-grid">';
-      html += card('账户', esc(r.account_id));
-      html += card('现金', fmtNum(r.cash, 2));
-      html += card('持仓市值', fmtNum(r.market_value, 2));
-      html += card('权益', fmtNum(r.equity, 2));
-      html += card('浮动盈亏', fmtNum(r.unrealized_pnl, 2), (r.unrealized_pnl ?? 0) < 0);
-      html += card('浮动收益率', fmtPct(r.unrealized_return), (r.unrealized_return ?? 0) < 0);
-      html += '</div>';
+      const RED = '#e03131', GREEN = '#16a34a', MUTED = '#6b7890';
+      const signColor = (v) => (v > 0 ? RED : (v < 0 ? GREEN : MUTED));
+      const ratio = r.equity ? (r.market_value / r.equity) : null;
+      const cell = (label, value, color) => `<div style="background:#f8fbff;border:1px solid var(--line);border-radius:10px;padding:12px 14px"><div style="font-size:11px;color:var(--muted)">${label}</div><div style="font-size:19px;font-weight:800;margin-top:4px;color:${color || 'var(--ink)'}">${value}</div></div>`;
+      let html = `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px">`;
+      html += cell('总资产', fmtNum(r.equity, 2));
+      html += cell('可用资金', fmtNum(r.cash, 2));
+      html += cell('持仓市值', fmtNum(r.market_value, 2));
+      html += cell('浮动盈亏', fmtNum(r.unrealized_pnl, 2), signColor(r.unrealized_pnl));
+      html += cell('收益率', fmtPct(r.unrealized_return), signColor(r.unrealized_return));
+      html += cell('仓位', ratio == null ? '—' : (ratio * 100).toFixed(1) + '%');
+      html += `</div><div style="color:var(--muted);font-size:12px;margin:8px 0 12px">账户 ${esc(r.account_id)}</div>`;
       const holdings = r.holdings || [];
       if (!holdings.length) {
-        return html + `<pre style="margin:0;margin-top:14px;font-family:inherit">无持仓${r.has_pending_orders ? '（存在待成交订单，可在「仿真交易台」推进市场事件成交）' : ''}。</pre>`;
+        return html + `<pre style="margin:0;font-family:inherit">无持仓${r.has_pending_orders ? '（存在待成交订单，可在「仿真交易台」推进市场事件成交）' : ''}。</pre>`;
       }
-      html += '<table style="width:100%;border-collapse:collapse;margin-top:14px;font-size:12px"><tr style="color:var(--muted);text-align:left"><th style="padding:6px 8px;border-bottom:1px solid var(--line)">标的</th><th style="padding:6px 8px;border-bottom:1px solid var(--line)">数量</th><th style="padding:6px 8px;border-bottom:1px solid var(--line)">成本</th><th style="padding:6px 8px;border-bottom:1px solid var(--line)">最新价</th><th style="padding:6px 8px;border-bottom:1px solid var(--line)">市值</th><th style="padding:6px 8px;border-bottom:1px solid var(--line)">浮动盈亏</th><th style="padding:6px 8px;border-bottom:1px solid var(--line)">收益率</th></tr>';
+      html += '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="color:var(--muted);text-align:right;background:#f7f9fc"><th style="padding:8px;border-bottom:1px solid var(--line);text-align:left">证券代码</th><th style="padding:8px;border-bottom:1px solid var(--line)">现价</th><th style="padding:8px;border-bottom:1px solid var(--line)">持仓</th><th style="padding:8px;border-bottom:1px solid var(--line)">可用</th><th style="padding:8px;border-bottom:1px solid var(--line)">成本价</th><th style="padding:8px;border-bottom:1px solid var(--line)">市值</th><th style="padding:8px;border-bottom:1px solid var(--line)">浮动盈亏</th><th style="padding:8px;border-bottom:1px solid var(--line)">盈亏比例</th></tr></thead><tbody>';
       for (const h of holdings) {
-        const pnlNeg = (h.pnl ?? 0) < 0;
-        html += `<tr><td style="padding:6px 8px;border-bottom:1px solid var(--line)">${esc(h.symbol)}</td><td style="padding:6px 8px;border-bottom:1px solid var(--line)">${fmtNum(h.quantity, 4)}</td><td style="padding:6px 8px;border-bottom:1px solid var(--line)">${h.cost != null ? fmtNum(h.cost, 4) : '—'}</td><td style="padding:6px 8px;border-bottom:1px solid var(--line)">${h.latest != null ? fmtNum(h.latest, 4) : '—'}</td><td style="padding:6px 8px;border-bottom:1px solid var(--line)">${h.market_value != null ? fmtNum(h.market_value, 2) : '—'}</td><td style="padding:6px 8px;border-bottom:1px solid var(--line);color:${pnlNeg ? 'var(--amber)' : 'var(--mint)'}">${h.pnl != null ? fmtNum(h.pnl, 2) : '—'}</td><td style="padding:6px 8px;border-bottom:1px solid var(--line)">${fmtPct(h.return)}</td></tr>`;
+        const priceColor = (h.latest != null && h.cost != null) ? signColor(h.latest - h.cost) : MUTED;
+        const pnlColor = signColor(h.pnl ?? 0);
+        const retColor = signColor(h.return ?? 0);
+        html += '<tr style="text-align:right">';
+        html += `<td style="padding:8px;border-bottom:1px solid var(--line);text-align:left">${esc(h.symbol)}</td>`;
+        html += `<td style="padding:8px;border-bottom:1px solid var(--line);color:${priceColor}">${h.latest != null ? fmtNum(h.latest, 4) : '—'}</td>`;
+        html += `<td style="padding:8px;border-bottom:1px solid var(--line)">${fmtNum(h.quantity, 4)}</td>`;
+        html += `<td style="padding:8px;border-bottom:1px solid var(--line)">${fmtNum(h.quantity, 4)}</td>`;
+        html += `<td style="padding:8px;border-bottom:1px solid var(--line)">${h.cost != null ? fmtNum(h.cost, 4) : '—'}</td>`;
+        html += `<td style="padding:8px;border-bottom:1px solid var(--line)">${h.market_value != null ? fmtNum(h.market_value, 2) : '—'}</td>`;
+        html += `<td style="padding:8px;border-bottom:1px solid var(--line);color:${pnlColor}">${h.pnl != null ? fmtNum(h.pnl, 2) : '—'}</td>`;
+        html += `<td style="padding:8px;border-bottom:1px solid var(--line);color:${retColor}">${fmtPct(h.return)}</td>`;
+        html += '</tr>';
       }
-      html += '</table>';
+      html += '</tbody></table></div>';
       return html;
     }
     async function loadPortfolioAccounts() {
@@ -289,13 +303,18 @@ Sum(Greater($close-Ref($close,1), 0), 14)/(Sum(Abs($close-Ref($close,1)), 14)+1e
         html += `<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px"><span style="font-weight:700">${esc(r.run_id)}</span><span style="display:flex;align-items:center;gap:8px"><span style="display:inline-flex;padding:2px 10px;border-radius:99px;font-size:12px;font-weight:700;background:${color}1a;color:${color}">${badge}</span><button onclick="deleteRunHistory('${esc(r.run_id)}')" style="padding:4px 10px;font-size:12px;background:#fff0f0;color:#a33;border:1px solid #f2d0d0;border-radius:8px;cursor:pointer">删除</button></span></div>`;
         html += `<div style="color:var(--muted);font-size:12px;margin-top:2px">${esc(r.created_at || '')}${r.kind === 'forward' && r.source_phase9_run_id ? ' · 来自 ' + esc(r.source_phase9_run_id) : ''}</div>`;
         if (isPhase9) {
-          html += `<div style="margin-top:8px;font-size:12px">资产类型 ${esc(r.asset_class)} · 指数 ${esc(r.index_code)} · top_k ${r.top_k} · 股票池 ${(r.symbols || []).length} 只</div>`;
-          html += `<div style="margin-top:4px;font-size:12px">区间 ${esc(r.start_date || '?')} ~ ${esc(r.end_date || '?')}</div>`;
+          const b = r.backtest || {};
           const factorText = (r.feature_expressions && r.feature_expressions.length) ? r.feature_expressions.join('\n') : 'Alpha158（默认 158 因子）';
-          html += `<div style="margin-top:6px;font-size:12px">因子列表：<pre style="margin:4px 0 0;white-space:pre-wrap;font-family:ui-monospace,SFMono-Regular,monospace;font-size:11px;color:var(--muted)">${esc(factorText)}</pre></div>`;
-          html += `<div style="margin-top:4px;font-size:12px">候选池：${esc((r.candidates || []).join(', ') || '无')}</div>`;
-          html += `<div style="margin-top:4px;font-size:12px">目标仓位：${esc((r.targets || []).map(t => t.symbol + ':' + t.weight.toFixed(4)).join(', ') || '无')}</div>`;
-          html += `<div style="margin-top:4px;font-size:12px">LightGBM Rank IC ${fmtNum(r.baseline_rank_ic, 4)} · DoubleEnsemble Rank IC ${fmtNum(r.ensemble_rank_ic, 4)} · 下单 ${(r.orders || []).length} 笔（账户 ${esc(r.account_id || '—')}）</div>`;
+          const excess = (b.strategy_cumulative_return ?? 0) - (b.benchmark_cumulative_return ?? 0);
+          html += `<div style="margin-top:8px;font-size:12px">资产类型 ${esc(r.asset_class)} · 指数 ${esc(r.index_code)} · top_k ${r.top_k} · 股票池 ${(r.symbols || []).length} 只</div>`;
+          html += '<table style="width:100%;border-collapse:collapse;margin-top:10px;font-size:12px"><tbody>';
+          html += `<tr><td style="padding:5px 8px;border-bottom:1px solid var(--line);color:var(--muted);width:72px;vertical-align:top">回测</td><td style="padding:5px 8px;border-bottom:1px solid var(--line)">区间 ${esc(r.start_date || '?')} ~ ${esc(r.end_date || '?')} · 样本 ${b.sample_days ?? '—'} 交易日 · Rank IC LGB ${fmtNum(r.baseline_rank_ic, 4)} / DEnsemble ${fmtNum(r.ensemble_rank_ic, 4)}</td></tr>`;
+          html += `<tr><td style="padding:5px 8px;border-bottom:1px solid var(--line);color:var(--muted);vertical-align:top">收益</td><td style="padding:5px 8px;border-bottom:1px solid var(--line)">策略累计 ${fmtPct(b.strategy_cumulative_return)} · 基准 ${fmtPct(b.benchmark_cumulative_return)} · 超额 ${fmtPct(excess)} · 年化 ${fmtPct(b.annualized_return)}</td></tr>`;
+          html += `<tr><td style="padding:5px 8px;border-bottom:1px solid var(--line);color:var(--muted);vertical-align:top">风险</td><td style="padding:5px 8px;border-bottom:1px solid var(--line)">最大回撤 ${fmtPct(b.max_drawdown)} · 年化波动 ${fmtPct(b.annualized_volatility)} · 夏普 ${fmtNum(b.sharpe, 2)} · 信息比率 ${fmtNum(b.information_ratio, 2)}</td></tr>`;
+          html += `<tr><td style="padding:5px 8px;border-bottom:1px solid var(--line);color:var(--muted);vertical-align:top">因子</td><td style="padding:5px 8px;border-bottom:1px solid var(--line)"><pre style="margin:0;white-space:pre-wrap;font-family:ui-monospace,SFMono-Regular,monospace;font-size:11px;color:var(--muted)">${esc(factorText)}</pre></td></tr>`;
+          html += `<tr><td style="padding:5px 8px;border-bottom:1px solid var(--line);color:var(--muted);vertical-align:top">候选</td><td style="padding:5px 8px;border-bottom:1px solid var(--line)">${esc((r.candidates || []).join(', ') || '无')} · 目标仓位 ${esc((r.targets || []).map(t => t.symbol + ':' + t.weight.toFixed(4)).join(', ') || '无')}</td></tr>`;
+          html += `<tr><td style="padding:5px 8px;color:var(--muted);vertical-align:top">下单</td><td style="padding:5px 8px">${(r.orders || []).length} 笔（账户 ${esc(r.account_id || '—')}）</td></tr>`;
+          html += '</tbody></table>';
         } else {
           const m = r.metrics || {};
           html += `<div style="margin-top:8px;font-size:12px">基准日 ${esc(r.entry_date)} · 基准 ${esc(r.benchmark_code)} · ${m.sample_days ?? '—'} 交易日</div>`;

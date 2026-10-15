@@ -282,6 +282,7 @@ def _record_phase9_run(
         "targets": result.get("targets", []),
         "baseline_rank_ic": result.get("baseline", {}).get("rank_ic"),
         "ensemble_rank_ic": result.get("ensemble", {}).get("rank_ic"),
+        "backtest": result.get("charts", {}).get("metrics", {}),
         "orders": result.get("orders", []),
         "rejected_count": len(result.get("rejected", [])),
         "account_id": result.get("account_id"),
