@@ -281,6 +281,9 @@ Sum(Greater($close-Ref($close,1), 0), 14)/(Sum(Abs($close-Ref($close,1)), 14)+1e
         html += `<div style="color:var(--muted);font-size:12px;margin-top:2px">${esc(r.created_at || '')}${r.kind === 'forward' && r.source_phase9_run_id ? ' · 来自 ' + esc(r.source_phase9_run_id) : ''}</div>`;
         if (isPhase9) {
           html += `<div style="margin-top:8px;font-size:12px">资产类型 ${esc(r.asset_class)} · 指数 ${esc(r.index_code)} · top_k ${r.top_k} · 股票池 ${(r.symbols || []).length} 只</div>`;
+          html += `<div style="margin-top:4px;font-size:12px">区间 ${esc(r.start_date || '?')} ~ ${esc(r.end_date || '?')}</div>`;
+          const factorText = (r.feature_expressions && r.feature_expressions.length) ? r.feature_expressions.join('\n') : 'Alpha158（默认 158 因子）';
+          html += `<div style="margin-top:6px;font-size:12px">因子列表：<pre style="margin:4px 0 0;white-space:pre-wrap;font-family:ui-monospace,SFMono-Regular,monospace;font-size:11px;color:var(--muted)">${esc(factorText)}</pre></div>`;
           html += `<div style="margin-top:4px;font-size:12px">候选池：${esc((r.candidates || []).join(', ') || '无')}</div>`;
           html += `<div style="margin-top:4px;font-size:12px">目标仓位：${esc((r.targets || []).map(t => t.symbol + ':' + t.weight.toFixed(4)).join(', ') || '无')}</div>`;
           html += `<div style="margin-top:4px;font-size:12px">LightGBM Rank IC ${fmtNum(r.baseline_rank_ic, 4)} · DoubleEnsemble Rank IC ${fmtNum(r.ensemble_rank_ic, 4)} · 下单 ${(r.orders || []).length} 笔（账户 ${esc(r.account_id || '—')}）</div>`;

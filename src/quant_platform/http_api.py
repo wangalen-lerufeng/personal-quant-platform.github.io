@@ -251,7 +251,10 @@ def phase9_payload(payload: dict, control_plane, simulation_registry, config=Non
         "paper_only": True,
         "execution_enabled": False,
     }
-    _record_phase9_run(symbols, top_k, asset_class, index_code, result, run_id=run_id)
+    _record_phase9_run(
+        symbols, top_k, asset_class, index_code, result, run_id=run_id,
+        feature_expressions=feature_expressions, start_date=start_date, end_date=end_date,
+    )
     _persist_last_phase9(research, asset_class, index_code, run_id, account_id)
     result["llm_analysis"] = (
         _phase9_llm_analysis(result, config)
@@ -261,7 +264,10 @@ def phase9_payload(payload: dict, control_plane, simulation_registry, config=Non
     return result
 
 
-def _record_phase9_run(symbols, top_k, asset_class, index_code, result, run_history=None, run_id=None) -> str:
+def _record_phase9_run(
+    symbols, top_k, asset_class, index_code, result,
+    run_history=None, run_id=None, feature_expressions=None, start_date=None, end_date=None,
+) -> str:
     store = run_history or get_store()
     record = {
         "kind": "phase9",
@@ -269,6 +275,9 @@ def _record_phase9_run(symbols, top_k, asset_class, index_code, result, run_hist
         "index_code": index_code or "manual",
         "top_k": top_k,
         "symbols": list(symbols),
+        "feature_expressions": list(feature_expressions) if feature_expressions else [],
+        "start_date": start_date,
+        "end_date": end_date,
         "candidates": result.get("candidates", []),
         "targets": result.get("targets", []),
         "baseline_rank_ic": result.get("baseline", {}).get("rank_ic"),
