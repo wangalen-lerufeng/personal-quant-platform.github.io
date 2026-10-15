@@ -44,8 +44,28 @@ class Phase9ApiTests(unittest.TestCase):
 
         self.assertGreater(result["submission"]["order_count"], 0)
         self.assertEqual(result["submission"]["submitted"][0]["status"], "accepted")
-        session = registry.get("paper-main")
+        self.assertIn("account_id", result)
+        self.assertEqual(result["account_id"], result["run_id"])
+        session = registry.get(result["account_id"])
         self.assertTrue(session.state()["orders"])
+
+    def test_phase9_payload_creates_distinct_accounts_per_run(self):
+        registry = PaperSimulationRegistry(SimulationAccountStore(":memory:"))
+        with patch("quant_platform.http_api.run_phase9_alpha158", return_value=_fake_research()):
+            first = phase9_payload(
+                {"symbols": SYMBOLS, "top_k": 3, "start_date": "2026-01-01", "end_date": "2026-06-01"},
+                None,
+                registry,
+            )
+            second = phase9_payload(
+                {"symbols": SYMBOLS, "top_k": 3, "start_date": "2026-01-01", "end_date": "2026-06-01"},
+                None,
+                registry,
+            )
+        self.assertNotEqual(first["account_id"], second["account_id"])
+        account_ids = {s["account_id"] for s in registry.list_states()}
+        self.assertEqual(len(account_ids), 2)
+        self.assertNotIn("paper-main", account_ids)
 
     def test_phase9_payload_requires_symbols(self):
         registry = PaperSimulationRegistry(SimulationAccountStore(":memory:"))

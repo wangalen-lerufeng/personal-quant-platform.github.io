@@ -234,15 +234,15 @@ def phase9_payload(payload: dict, control_plane, simulation_registry, config=Non
     ]
     plan = plan_orders({}, targets, risk_engine)
 
-    account_id = "paper-main"
-    try:
-        session = simulation_registry.get(account_id)
-    except KeyError:
-        session = simulation_registry.create(account_id, initial_cash=1_000_000.0)
+    run_id = f"phase9-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(3)}"
+    account_id = run_id
+    session = simulation_registry.create(account_id, initial_cash=1_000_000.0)
     submission = submit_to_simulation(plan, session)
 
     result = {
         **research,
+        "run_id": run_id,
+        "account_id": account_id,
         "orders": [{"symbol": order.symbol, "side": order.side.value, "quantity": order.quantity} for order in plan.orders],
         "rejected": [dict(item) for item in plan.rejected],
         "audit": [{"stage": entry.stage, "symbol": entry.symbol, "detail": dict(entry.detail)} for entry in plan.audit],
@@ -250,9 +250,8 @@ def phase9_payload(payload: dict, control_plane, simulation_registry, config=Non
         "paper_only": True,
         "execution_enabled": False,
     }
-    phase9_run_id = _record_phase9_run(symbols, top_k, asset_class, index_code, result)
-    result["run_id"] = phase9_run_id
-    _persist_last_phase9(research, asset_class, index_code, phase9_run_id)
+    _record_phase9_run(symbols, top_k, asset_class, index_code, result, run_id=run_id)
+    _persist_last_phase9(research, asset_class, index_code, run_id, account_id)
     result["llm_analysis"] = (
         _phase9_llm_analysis(result, config)
         if config is not None and config.ai_model_enabled
@@ -261,9 +260,9 @@ def phase9_payload(payload: dict, control_plane, simulation_registry, config=Non
     return result
 
 
-def _record_phase9_run(symbols, top_k, asset_class, index_code, result, run_history=None) -> str:
+def _record_phase9_run(symbols, top_k, asset_class, index_code, result, run_history=None, run_id=None) -> str:
     store = run_history or get_store()
-    return store.add({
+    record = {
         "kind": "phase9",
         "asset_class": asset_class,
         "index_code": index_code or "manual",
@@ -275,13 +274,16 @@ def _record_phase9_run(symbols, top_k, asset_class, index_code, result, run_hist
         "ensemble_rank_ic": result.get("ensemble", {}).get("rank_ic"),
         "orders": result.get("orders", []),
         "rejected_count": len(result.get("rejected", [])),
-        "account_id": "paper-main",
+        "account_id": result.get("account_id"),
         "research_only": True,
         "execution_enabled": False,
-    })
+    }
+    if run_id:
+        record["run_id"] = run_id
+    return store.add(record)
 
 
-def _persist_last_phase9(research: dict, asset_class: str, index_code: str, phase9_run_id: str) -> None:
+def _persist_last_phase9(research: dict, asset_class: str, index_code: str, phase9_run_id: str, account_id: str) -> None:
     targets = research.get("targets", [])
     symbols = [str(item["symbol"]) for item in targets]
     weights = {str(item["symbol"]): float(item["weight"]) for item in targets}
@@ -292,6 +294,7 @@ def _persist_last_phase9(research: dict, asset_class: str, index_code: str, phas
         json.dumps(
             {
                 "phase9_run_id": phase9_run_id,
+                "account_id": account_id,
                 "symbols": symbols,
                 "weights": weights,
                 "asset_class": asset_class,
