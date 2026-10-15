@@ -1,8 +1,19 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
+from quant_platform.http_api import run_history_delete_payload
 from quant_platform.run_history import RunHistoryStore
+
+
+class FakeRegistry:
+    def __init__(self):
+        self.deleted = []
+
+    def delete(self, account_id):
+        self.deleted.append(account_id)
+        return {"deleted": account_id}
 
 
 class RunHistoryStoreTests(unittest.TestCase):
@@ -60,6 +71,26 @@ class RunHistoryStoreTests(unittest.TestCase):
             result = store.delete("does-not-exist")
             self.assertEqual(result["removed"], 0)
             self.assertEqual(len(store.all()), 1)
+
+
+class RunHistoryDeletePayloadTests(unittest.TestCase):
+    def test_delete_payload_removes_linked_account(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = RunHistoryStore(store_path=str(Path(tmp) / "history.json"))
+            store.add({"run_id": "p9-x", "kind": "phase9", "account_id": "p9-x"})
+            registry = FakeRegistry()
+            with patch("quant_platform.http_api.get_store", return_value=store):
+                result = run_history_delete_payload({"run_id": "p9-x"}, registry)
+            self.assertEqual(result["deleted_account"], "p9-x")
+            self.assertEqual(registry.deleted, ["p9-x"])
+            self.assertEqual(store.all(), [])
+
+    def test_delete_payload_unknown_record_raises(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = RunHistoryStore(store_path=str(Path(tmp) / "history.json"))
+            with patch("quant_platform.http_api.get_store", return_value=store):
+                with self.assertRaisesRegex(ValueError, "未知"):
+                    run_history_delete_payload({"run_id": "missing"}, FakeRegistry())
 
 
 if __name__ == "__main__":

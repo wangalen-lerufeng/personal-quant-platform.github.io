@@ -512,12 +512,28 @@ def _start_forward_validation_from_last(tracker: ForwardValidationTracker) -> di
     return report
 
 
-def run_history_delete_payload(payload: dict) -> dict:
+def run_history_delete_payload(payload: dict, simulation_registry=None) -> dict:
     run_id = str(payload.get("run_id", "")).strip()
     if not run_id:
         raise ValueError("run_id is required")
-    result = get_store().delete(run_id)
-    result.update({"paper_only": True, "execution_enabled": False})
+    store = get_store()
+    record = store.get(run_id)
+    if record is None:
+        raise ValueError(f"未知的运行记录: {run_id}")
+    account_id = record.get("account_id")
+    result = store.delete(run_id)
+    deleted_account = None
+    if account_id and simulation_registry is not None:
+        try:
+            simulation_registry.delete(str(account_id))
+            deleted_account = str(account_id)
+        except KeyError:
+            pass
+    result.update({
+        "deleted_account": deleted_account,
+        "paper_only": True,
+        "execution_enabled": False,
+    })
     return result
 
 
@@ -1331,7 +1347,9 @@ def make_handler(
             if route == "/run-history/delete":
                 try:
                     length = int(self.headers.get("Content-Length", "0"))
-                    body = run_history_delete_payload(json.loads(self.rfile.read(length)))
+                    body = run_history_delete_payload(
+                        json.loads(self.rfile.read(length)), simulation_registry
+                    )
                     status = 200
                 except (
                     ValueError,
