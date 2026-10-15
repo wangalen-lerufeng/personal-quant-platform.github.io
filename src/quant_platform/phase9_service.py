@@ -24,6 +24,7 @@ from .providers import TushareDatasetProvider
 from .qlib_alpha158 import run_alpha158
 from .qlib_dump import build_ohlcv_panel, dump_etf_to_qlib
 from .qlib_model import evaluate_scores, run_qlib_baseline, run_qlib_ensemble
+from .report_charts import compute_report_charts
 from .trading_agents import EvidenceItem, build_role_verdicts, synthesize_decision
 
 
@@ -159,11 +160,16 @@ def run_phase9(panel, *, top_k: int = 3, seed: int = 42) -> dict:
         latest_date, candidates = list(baseline["candidates"].items())[-1]
 
     final = _finalize(panel, candidates, latest_date, seed)
+    charts = compute_report_charts(
+        baseline["scores"], panel, baseline["candidates"],
+        label_column="forward_return_5d",
+    )
 
     return {
         "panel": _panel_summary(panel),
         "baseline": {"rank_ic": baseline_eval["rank_ic"], "icir": baseline_eval["icir"]},
         "ensemble": {"rank_ic": ensemble_eval["rank_ic"], "icir": ensemble_eval["icir"]},
+        "charts": charts,
         **final,
         "research_only": True,
         "execution_enabled": False,
@@ -269,10 +275,15 @@ def run_phase9_alpha158(
         latest_date, candidates = list(baseline["candidates"].items())[-1]
 
     final = _finalize(panel, candidates, latest_date, seed)
+    charts = compute_report_charts(
+        baseline["scores"], panel, baseline["candidates"],
+        label_column="forward_return_1d",
+    )
     return {
         "panel": _panel_summary(panel),
         "baseline": {"rank_ic": baseline_eval["rank_ic"], "icir": baseline_eval["icir"]},
         "ensemble": {"rank_ic": ensemble_eval["rank_ic"], "icir": ensemble_eval["icir"]},
+        "charts": charts,
         **final,
         "research_only": True,
         "execution_enabled": False,
