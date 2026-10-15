@@ -17,6 +17,8 @@ from urllib.parse import parse_qs, urlsplit
 import pandas as pd
 
 from .adapters import Mt5PaperGateway
+from .anysearch import keyword_to_symbols
+from .anysearch_credentials import anysearch_token_status, save_anysearch_token
 from .backtest import BacktestEngine, FuturesRolloverRule, MarketExecutionPolicy
 from .config import RuntimeConfig
 from .domain import AssetClass, MarketEvent, OrderIntent, OrderSide
@@ -989,6 +991,8 @@ def api_payload(
         return model_config_payload(config)
     if path == "/settings/tushare-token":
         return tushare_token_status()
+    if path == "/settings/anysearch-token":
+        return anysearch_token_status()
     if path == "/orders" and control_plane is not None:
         return {"orders": control_plane.orders(), "execution_enabled": False}
     if path == "/audit-events" and control_plane is not None:
@@ -1038,7 +1042,8 @@ def api_payload(
 
 
 _JSON_POST_ROUTES = {
-    "/settings/tushare-token", "/agent/research", "/order-features",
+    "/settings/tushare-token", "/settings/anysearch-token",
+    "/anysearch/keyword-to-stocks", "/agent/research", "/order-features",
     "/simulation-risk", "/factor-analysis", "/factor-panel-analysis",
     "/market-state", "/live-readiness", "/simulation/create",
     "/simulation/order", "/simulation/market", "/simulation/control",
@@ -1163,6 +1168,47 @@ def make_handler(
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+            if route == "/settings/anysearch-token":
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                    if length <= 0 or length > 2048:
+                        raise ValueError("invalid request size")
+                    request = json.loads(self.rfile.read(length))
+                    body = save_anysearch_token(request.get("token", ""))
+                    status = 200
+                except (ValueError, TypeError, json.JSONDecodeError) as error:
+                    body = {"error": str(error), "execution_enabled": False}
+                    status = 400
+                payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+            if route == "/anysearch/keyword-to-stocks":
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                    request = json.loads(self.rfile.read(length))
+                    symbols = keyword_to_symbols(request.get("keyword", ""))
+                    body = {
+                        "symbols": symbols,
+                        "count": len(symbols),
+                        "execution_enabled": False,
+                        "paper_only": True,
+                    }
+                    status = 200
+                except (ValueError, KeyError, TypeError, RuntimeError, json.JSONDecodeError) as error:
+                    body = {"error": str(error), "execution_enabled": False}
+                    status = 400
+                payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_header("Content-Length", str(len(payload)))
                 self.end_headers()
                 self.wfile.write(payload)

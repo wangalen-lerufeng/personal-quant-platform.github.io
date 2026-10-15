@@ -21,7 +21,7 @@
 - 订单生命周期和审计事件骨架
 - 部分成交、成交数量约束与追加式状态审计
 - 支持卖出信号平仓的回测与权益曲线
-- 386 项标准库单元测试
+- 395 项标准库单元测试
 - 只读 AI 研究工具与回测实验查询
 - 可运行的纸面交易示例：`examples/run_paper_loop.py`
 
@@ -51,6 +51,7 @@
 | A 股个股 | `daily` + `adj_factor` | ✅ |
 | 港股 | `hk_daily` | 暂未复权 |
 | 指数成分 | `index_weight`（沪深300 / 中证500 / 上证50 自动取成分） | 走对应个股/ETF |
+| 关键词转股票 | AnySearch `/v1/search`（关键词 → A 股代码，需在系统设置配置 API Key） | — |
 | 本地 CSV | `timestamp,symbol,asset_class,price` | — |
 
 ### 因子与特征
