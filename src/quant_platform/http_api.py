@@ -239,6 +239,7 @@ def phase9_payload(payload: dict, control_plane, simulation_registry, config=Non
     account_id = run_id
     session = simulation_registry.create(account_id, initial_cash=1_000_000.0)
     submission = submit_to_simulation(plan, session)
+    _fill_paper_orders(session, plan, asset_class)
 
     result = {
         **research,
@@ -262,6 +263,33 @@ def phase9_payload(payload: dict, control_plane, simulation_registry, config=Non
         else None
     )
     return result
+
+
+_DAILY_DATASET = {"etf": "fund_daily", "stock": "daily", "hk": "hk_daily"}
+
+
+def _latest_close_for_fill(symbol: str, asset_class: str):
+    dataset = _DAILY_DATASET.get(asset_class, "daily")
+    provider = TushareDatasetProvider("TUSHARE_TOKEN")
+    today = date.today().isoformat()
+    start = (date.fromisoformat(today) - timedelta(days=30)).isoformat()
+    rows = provider.fetch_records(dataset, symbol, start, today)
+    if not rows:
+        return None
+    latest = max(rows, key=lambda r: str(r.get("trade_date", "")).replace("-", "")[:8])
+    close = latest.get("close")
+    return float(close) if close is not None else None
+
+
+def _fill_paper_orders(session, plan, asset_class: str) -> None:
+    """Mark the submitted paper orders to market at the latest real close."""
+    for order in plan.orders:
+        try:
+            close = _latest_close_for_fill(order.symbol, asset_class)
+            if close:
+                session.on_market(order.symbol, close, volume=1e9)
+        except Exception:
+            continue
 
 
 def _record_phase9_run(

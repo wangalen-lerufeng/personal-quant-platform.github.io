@@ -28,7 +28,7 @@ def _fake_research():
 class Phase9ApiTests(unittest.TestCase):
     def test_phase9_payload_submits_to_paper_session(self):
         registry = PaperSimulationRegistry(SimulationAccountStore(":memory:"))
-        with patch("quant_platform.http_api.run_phase9_alpha158", return_value=_fake_research()):
+        with patch("quant_platform.http_api.run_phase9_alpha158", return_value=_fake_research()), patch("quant_platform.http_api._fill_paper_orders"):
             result = phase9_payload(
                 {"symbols": SYMBOLS, "top_k": 3, "start_date": "2026-01-01", "end_date": "2026-06-01"},
                 None,
@@ -51,7 +51,7 @@ class Phase9ApiTests(unittest.TestCase):
 
     def test_phase9_payload_creates_distinct_accounts_per_run(self):
         registry = PaperSimulationRegistry(SimulationAccountStore(":memory:"))
-        with patch("quant_platform.http_api.run_phase9_alpha158", return_value=_fake_research()):
+        with patch("quant_platform.http_api.run_phase9_alpha158", return_value=_fake_research()), patch("quant_platform.http_api._fill_paper_orders"):
             first = phase9_payload(
                 {"symbols": SYMBOLS, "top_k": 3, "start_date": "2026-01-01", "end_date": "2026-06-01"},
                 None,
@@ -66,6 +66,21 @@ class Phase9ApiTests(unittest.TestCase):
         account_ids = {s["account_id"] for s in registry.list_states()}
         self.assertEqual(len(account_ids), 2)
         self.assertNotIn("paper-main", account_ids)
+
+    def test_phase9_payload_fills_positions(self):
+        registry = PaperSimulationRegistry(SimulationAccountStore(":memory:"))
+        with patch("quant_platform.http_api.run_phase9_alpha158", return_value=_fake_research()), patch("quant_platform.http_api._latest_close_for_fill", return_value=10.0):
+            result = phase9_payload(
+                {"symbols": SYMBOLS, "top_k": 3, "start_date": "2026-01-01", "end_date": "2026-06-01"},
+                None,
+                registry,
+            )
+        session = registry.get(result["account_id"])
+        positions = session.matcher.positions
+        self.assertIn("510300.SH", positions)
+        self.assertAlmostEqual(positions["510300.SH"], 0.5)
+        self.assertIn("510500.SH", positions)
+        self.assertAlmostEqual(positions["510500.SH"], 0.5)
 
     def test_phase9_payload_requires_symbols(self):
         registry = PaperSimulationRegistry(SimulationAccountStore(":memory:"))
