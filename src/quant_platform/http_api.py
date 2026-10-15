@@ -257,11 +257,6 @@ def phase9_payload(payload: dict, control_plane, simulation_registry, config=Non
         feature_expressions=feature_expressions, start_date=start_date, end_date=end_date,
     )
     _persist_last_phase9(research, asset_class, index_code, run_id, account_id)
-    result["llm_analysis"] = (
-        _phase9_llm_analysis(result, config)
-        if config is not None and config.ai_model_enabled
-        else None
-    )
     return result
 
 
@@ -347,61 +342,8 @@ def _persist_last_phase9(research: dict, asset_class: str, index_code: str, phas
     )
 
 
-def _build_phase9_analysis_prompt(result: dict) -> str:
-    panel = result.get("panel", {})
-    baseline = result.get("baseline", {})
-    ensemble = result.get("ensemble", {})
-    candidates = result.get("candidates", [])
-    verification = result.get("verification", [])
-    sizing = result.get("sizing", {})
-    targets = result.get("targets", [])
-
-    def fmt(value):
-        return "—" if value is None else f"{value:.4f}"
-
-    lines = [
-        "你是一名量化投资研究助手。以下是平台自动跑出的「组合研究」流水线结果，请用中文做一份客观、结构化的投资解读。",
-        "注意：这些是研究/纸面结果，不构成投资建议；只基于下面给出的数据解读，不要编造任何数字。",
-        "",
-        f"1. 数据面板：{panel.get('rows', '?')} 行 × {panel.get('symbols', '?')} 只，区间 {panel.get('start', '?')} ~ {panel.get('end', '?')}。",
-        f"2. 候选池模型样本外表现：LightGBM Rank IC={fmt(baseline.get('rank_ic'))} ICIR={fmt(baseline.get('icir'))}；DoubleEnsemble Rank IC={fmt(ensemble.get('rank_ic'))} ICIR={fmt(ensemble.get('icir'))}。",
-        f"3. 最新候选池：{'、'.join(candidates) if candidates else '无'}。",
-    ]
-    for item in verification:
-        tags = "、".join(item.get("risk_tags", [])) or "无"
-        lines.append(f"   - {item.get('symbol')}：验真 {item.get('verdict')}（风险标签：{tags}）")
-    target_str = "无"
-    if targets:
-        target_str = "、".join(f"{t['symbol']}:{t['weight']:.4f}" for t in targets)
-    lines.append(f"4. PPO 调整因子：{fmt(sizing.get('adjustment'))}。")
-    lines.append(f"5. 目标仓位：{target_str}。")
-    lines.append(
-        f"6. 风控订单：{len(result.get('orders', []))} 笔、拒绝 {len(result.get('rejected', []))} 笔；"
-        f"纸面提交 {result.get('submission', {}).get('order_count', 0)} 笔。"
-    )
-    lines.append("")
-    lines.append("请分三段输出：A. 组合整体解读；B. 各候选标的简要点评；C. 风险提示与局限（尤其 IC 稳定性、样本规模、真实执行已关闭）。")
-    return "\n".join(lines)
-
-
-def _phase9_llm_analysis(result: dict, config) -> str | None:
-    try:
-        prompt = _build_phase9_analysis_prompt(result)
-        client = OpenAICompatibleChatClient(
-            config.ai_base_url,
-            config.ai_model,
-            config.ai_api_key_env,
-            config.ai_temperature,
-            config.ai_max_tokens,
-            config.ai_timeout_seconds,
-        )
-        return client.complete(prompt)
-    except Exception as error:
-        return f"[大模型解读失败] {error}"
-
-
 def factor_symbol_payload(payload: dict, config=None) -> dict:
-    """Compute factor time series + stats for a single symbol, plus an LLM analysis."""
+    """Compute factor time series + stats for a single symbol."""
     from .qlib_alpha158 import analyze_single_symbol_factors
 
     symbol = str(payload.get("symbol", "")).strip()
@@ -421,51 +363,7 @@ def factor_symbol_payload(payload: dict, config=None) -> dict:
     result = analyze_single_symbol_factors(
         symbol, factor_expressions, start_date, end_date, asset_class=asset_class,
     )
-    result["llm_analysis"] = (
-        _factor_llm_analysis(result, config)
-        if config is not None and config.ai_model_enabled
-        else None
-    )
     return result
-
-
-def _build_factor_analysis_prompt(result: dict) -> str:
-    lines = [
-        f"你是量化投资研究助手。以下是股票 {result['symbol']} 的因子时序分析结果，请结合这些因子做客观解读。",
-        "注意：这是研究/统计结果，不构成投资建议；只基于数据解读，不要编造任何数字。",
-        "",
-        f"数据区间：{result['start']} ~ {result['end']}。",
-    ]
-    for factor in result["factors"]:
-        percentile = factor["percentile"]
-        percentile_str = "—" if percentile is None else f"{percentile * 100:.1f}%"
-        ic = "—" if factor["ic"] is None else f"{factor['ic']:.4f}"
-        lines.append(
-            f"- {factor['expression']}：当前值={factor['latest']:.4f}，历史分位={percentile_str}，"
-            f"与次日收益相关性 IC={ic}，均值={factor['mean']:.4f}，标准差={factor['std']:.4f}"
-        )
-    lines.append("")
-    lines.append(
-        "请输出：A. 该股当前趋势/位置的客观判断；B. 哪些因子信号最强（看 IC 绝对值）；"
-        "C. 风险提示与局限（单股因子 IC 噪声大、非确定性预测）。"
-    )
-    return "\n".join(lines)
-
-
-def _factor_llm_analysis(result: dict, config) -> str | None:
-    try:
-        prompt = _build_factor_analysis_prompt(result)
-        client = OpenAICompatibleChatClient(
-            config.ai_base_url,
-            config.ai_model,
-            config.ai_api_key_env,
-            config.ai_temperature,
-            config.ai_max_tokens,
-            config.ai_timeout_seconds,
-        )
-        return client.complete(prompt)
-    except Exception as error:
-        return f"[大模型解读失败] {error}"
 
 
 def forward_validation_payload(payload: dict, tracker: ForwardValidationTracker, run_history=None) -> dict:
