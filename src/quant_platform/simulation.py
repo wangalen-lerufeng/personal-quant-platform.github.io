@@ -250,5 +250,13 @@ class PaperSimulationRegistry:
         except KeyError as error:
             raise KeyError(f"unknown simulation account: {account_id}") from error
 
+    def delete(self, account_id: str) -> dict[str, object]:
+        if account_id not in self._sessions:
+            raise KeyError(f"unknown simulation account: {account_id}")
+        del self._sessions[account_id]
+        if self.account_store is not None and hasattr(self.account_store, "delete_account"):
+            self.account_store.delete_account(account_id)
+        return {"deleted": account_id, "paper_only": True, "execution_enabled": False}
+
     def list_states(self) -> list[dict[str, object]]:
         return [session.state() for session in self._sessions.values()]

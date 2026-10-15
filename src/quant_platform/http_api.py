@@ -32,6 +32,7 @@ from .market_state import classify_market_state
 from .order_features import analyze_order_flow
 from .phase9_service import run_phase9_alpha158
 from .pipeline import TargetPosition, plan_orders, submit_to_simulation
+from .portfolio_report import build_account_report
 from .providers import AkshareForexProvider, TushareDatasetProvider, TushareProvider, TushareStockDailyProvider
 from .risk import RiskEngine, RiskLimits, RiskMonitor
 from .run_history import get_store
@@ -599,6 +600,20 @@ def simulation_control_payload(payload: dict, registry: PaperSimulationRegistry)
     return session.state()
 
 
+def simulation_delete_payload(payload: dict, registry: PaperSimulationRegistry) -> dict:
+    account_id = str(payload.get("account_id", "")).strip()
+    if not account_id:
+        raise ValueError("account_id is required")
+    return registry.delete(account_id)
+
+
+def simulation_account_report_payload(payload: dict, registry: PaperSimulationRegistry) -> dict:
+    account_id = str(payload.get("account_id", "")).strip()
+    if not account_id:
+        raise ValueError("account_id is required")
+    return build_account_report(registry.get(account_id))
+
+
 def simulation_reconciliation_payload(
     payload: dict,
     registry: PaperSimulationRegistry,
@@ -1038,7 +1053,8 @@ _JSON_POST_ROUTES = {
     "/market-state", "/live-readiness", "/simulation/create",
     "/simulation/order", "/simulation/market", "/simulation/control",
     "/simulation/reconciliation", "/simulation/acceptance", "/backtest",
-    "/simulation/portfolio-report", "/phase9/run", "/factor/symbol",
+    "/simulation/portfolio-report", "/simulation/delete", "/simulation/account-report",
+    "/phase9/run", "/factor/symbol",
     "/validation/forward",
 }
 
@@ -1227,6 +1243,8 @@ def make_handler(
                 "/simulation/control": simulation_control_payload,
                 "/simulation/reconciliation": simulation_reconciliation_payload,
                 "/simulation/acceptance": simulation_acceptance_payload,
+                "/simulation/delete": simulation_delete_payload,
+                "/simulation/account-report": simulation_account_report_payload,
             }
             if route in simulation_routes:
                 try:

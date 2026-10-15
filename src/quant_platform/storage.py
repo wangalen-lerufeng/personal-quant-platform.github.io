@@ -208,3 +208,14 @@ class SimulationAccountStore:
             "SELECT state_json FROM simulation_session_states ORDER BY account_id"
         ).fetchall()
         return [json.loads(row["state_json"]) for row in rows]
+
+    def delete_account(self, account_id: str) -> None:
+        if not account_id.strip():
+            raise ValueError("account_id is required")
+        self.connection.execute(
+            "DELETE FROM simulation_session_states WHERE account_id = ?", (account_id,)
+        )
+        self.connection.execute(
+            "DELETE FROM simulation_account_snapshots WHERE account_id = ?", (account_id,)
+        )
+        self.connection.commit()
