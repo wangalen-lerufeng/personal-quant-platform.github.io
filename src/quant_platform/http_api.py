@@ -309,8 +309,8 @@ def _phase9_llm_analysis(result: dict, config) -> str | None:
         return f"[大模型解读失败] {error}"
 
 
-def factor_symbol_payload(payload: dict) -> dict:
-    """Compute factor time series + stats for a single symbol."""
+def factor_symbol_payload(payload: dict, config=None) -> dict:
+    """Compute factor time series + stats for a single symbol, plus an LLM analysis."""
     from .qlib_alpha158 import analyze_single_symbol_factors
 
     symbol = str(payload.get("symbol", "")).strip()
@@ -326,9 +326,55 @@ def factor_symbol_payload(payload: dict) -> dict:
         raise ValueError("symbol is required")
     if not start_date:
         raise ValueError("start_date is required")
-    return analyze_single_symbol_factors(
+
+    result = analyze_single_symbol_factors(
         symbol, factor_expressions, start_date, end_date, asset_class=asset_class,
     )
+    result["llm_analysis"] = (
+        _factor_llm_analysis(result, config)
+        if config is not None and config.ai_model_enabled
+        else None
+    )
+    return result
+
+
+def _build_factor_analysis_prompt(result: dict) -> str:
+    lines = [
+        f"你是量化投资研究助手。以下是股票 {result['symbol']} 的因子时序分析结果，请结合这些因子做客观解读。",
+        "注意：这是研究/统计结果，不构成投资建议；只基于数据解读，不要编造任何数字。",
+        "",
+        f"数据区间：{result['start']} ~ {result['end']}。",
+    ]
+    for factor in result["factors"]:
+        percentile = factor["percentile"]
+        percentile_str = "—" if percentile is None else f"{percentile * 100:.1f}%"
+        ic = "—" if factor["ic"] is None else f"{factor['ic']:.4f}"
+        lines.append(
+            f"- {factor['expression']}：当前值={factor['latest']:.4f}，历史分位={percentile_str}，"
+            f"与次日收益相关性 IC={ic}，均值={factor['mean']:.4f}，标准差={factor['std']:.4f}"
+        )
+    lines.append("")
+    lines.append(
+        "请输出：A. 该股当前趋势/位置的客观判断；B. 哪些因子信号最强（看 IC 绝对值）；"
+        "C. 风险提示与局限（单股因子 IC 噪声大、非确定性预测）。"
+    )
+    return "\n".join(lines)
+
+
+def _factor_llm_analysis(result: dict, config) -> str | None:
+    try:
+        prompt = _build_factor_analysis_prompt(result)
+        client = OpenAICompatibleChatClient(
+            config.ai_base_url,
+            config.ai_model,
+            config.ai_api_key_env,
+            config.ai_temperature,
+            config.ai_max_tokens,
+            config.ai_timeout_seconds,
+        )
+        return client.complete(prompt)
+    except Exception as error:
+        return f"[大模型解读失败] {error}"
 
 
 def simulation_create_payload(payload: dict, registry: PaperSimulationRegistry) -> dict:
@@ -1106,7 +1152,7 @@ def make_handler(
             if route == "/factor/symbol":
                 try:
                     length = int(self.headers.get("Content-Length", "0"))
-                    body = factor_symbol_payload(json.loads(self.rfile.read(length)))
+                    body = factor_symbol_payload(json.loads(self.rfile.read(length)), config)
                     status = 200
                 except (
                     ValueError,

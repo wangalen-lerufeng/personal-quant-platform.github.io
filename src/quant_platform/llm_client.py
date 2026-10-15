@@ -65,10 +65,12 @@ class OpenAICompatibleChatClient:
     def complete_messages(self, messages: list[dict]) -> str:
         if not self.api_key:
             raise ValueError("AI model API key is not configured")
-        body = {"model": self.model, "temperature": self.temperature, "max_tokens": self.max_tokens, "thinking": {"type": "disabled"}, "messages": messages}
+        body = {"model": self.model, "temperature": self.temperature, "max_tokens": self.max_tokens, "messages": messages}
         request = Request(self.endpoint, data=json.dumps(body, ensure_ascii=False).encode("utf-8"), headers={"Content-Type": "application/json", "Authorization": f"Bearer {self.api_key}"}, method="POST")
         with self._opener(request, timeout=self.timeout) as response:
             payload = json.loads(response.read().decode("utf-8"))
+        if "choices" not in payload:
+            raise ValueError(f"模型接口返回错误: {payload.get('error') or payload}")
         try:
             message = payload["choices"][0]["message"]
             content = message.get("content") or ""
