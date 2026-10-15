@@ -58,6 +58,7 @@ class ForwardValidationTracker:
             "symbols": symbols,
             "weights": normalized,
             "entry_prices": entry_prices,
+            "latest_prices": dict(entry_prices),
             "benchmark_entry": benchmark_entry,
             "predictions": predictions or {},
             "records": [{
@@ -105,6 +106,7 @@ class ForwardValidationTracker:
 
         state["records"] = [r for r in state["records"] if r["date"] != trade_date] + [record]
         state["records"].sort(key=lambda r: r["date"])
+        state["latest_prices"] = {s: latest[s] for s in state["symbols"]}
         self._save(state)
         return self.report()
 
@@ -128,28 +130,48 @@ class ForwardValidationTracker:
         benchmark_cum = last_record.get("benchmark_nav", 1.0) - 1.0
         excess_cum = last_record.get("excess", 0.0)
 
+        latest_prices = state.get("latest_prices", state.get("entry_prices", {}))
+        symbols = state.get("symbols", [])
+        weights = state.get("weights", {})
+        daily_returns = []
+        for i, r in enumerate(records):
+            prev_nav = 1.0 if i == 0 else records[i - 1]["strategy_nav"]
+            prev_sym = {s: 0.0 for s in symbols} if i == 0 else records[i - 1]["per_symbol_returns"]
+            daily_returns.append({
+                "date": r["date"],
+                "return": round(r["strategy_nav"] / prev_nav - 1.0, 6),
+                "per_symbol": {
+                    s: round((1.0 + r["per_symbol_returns"].get(s, 0.0)) / (1.0 + prev_sym.get(s, 0.0)) - 1.0, 6)
+                    for s in symbols
+                },
+            })
+
         return {
             "started": True,
             "run_id": state.get("run_id"),
             "entry_date": state.get("entry_date"),
             "benchmark_code": state.get("benchmark_code"),
             "asset_class": state.get("asset_class"),
-            "symbols": state.get("symbols", []),
-            "weights": state.get("weights", {}),
+            "symbols": symbols,
+            "weights": weights,
             "predictions": state.get("predictions", {}),
             "dates": [r["date"] for r in records],
             "strategy_nav": strategy_nav,
             "benchmark_nav": benchmark_nav,
             "excess": [r["excess"] for r in records],
             "drawdown": drawdown,
+            "daily_returns": daily_returns,
+            "latest_prices": latest_prices,
             "per_symbol": [
                 {
                     "symbol": s,
-                    "weight": state.get("weights", {}).get(s),
-                    "return": per_symbol.get(s),
+                    "weight": weights.get(s),
                     "entry_price": state.get("entry_prices", {}).get(s),
+                    "latest_price": latest_prices.get(s),
+                    "return": per_symbol.get(s),
+                    "contribution": round((weights.get(s) or 0.0) * (per_symbol.get(s) or 0.0), 6),
                 }
-                for s in state.get("symbols", [])
+                for s in symbols
             ],
             "metrics": {
                 "strategy_cumulative_return": round(strategy_cum, 4),

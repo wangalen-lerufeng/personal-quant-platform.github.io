@@ -74,6 +74,28 @@ class ForwardValidationTests(unittest.TestCase):
             self.assertEqual(result["metrics"]["sample_days"], 2)
             self.assertEqual(result["dates"], ["2026-10-15", "2026-10-16"])
 
+    def test_report_includes_holdings_and_daily_returns(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            prices = {"600519.SH": 100.0, "000858.SZ": 100.0}
+            index = {"000300.SH": 1000.0}
+            fake_date = FakeDate()
+            tracker = ForwardValidationTracker(store_path=str(Path(tmp) / "fv.json"))
+            with patch("quant_platform.forward_validation.TushareDatasetProvider", return_value=FakeProvider(prices, index)), patch("quant_platform.forward_validation.date", fake_date):
+                tracker.start(["600519.SH", "000858.SZ"])
+                fake_date.today_value = "2026-10-16"
+                prices["600519.SH"] = 110.0
+                result = tracker.update()
+            daily = result["daily_returns"]
+            self.assertEqual(len(daily), 2)
+            self.assertAlmostEqual(daily[0]["return"], 0.0, places=6)
+            self.assertAlmostEqual(daily[1]["return"], 0.05, places=6)
+            self.assertEqual(result["latest_prices"]["600519.SH"], 110.0)
+            top = result["per_symbol"][0]
+            self.assertEqual(top["symbol"], "600519.SH")
+            self.assertAlmostEqual(top["latest_price"], 110.0)
+            self.assertAlmostEqual(top["entry_price"], 100.0)
+            self.assertAlmostEqual(top["contribution"], 0.05, places=6)
+
     def test_start_requires_symbols(self):
         with tempfile.TemporaryDirectory() as tmp:
             tracker = ForwardValidationTracker(store_path=str(Path(tmp) / "fv.json"))

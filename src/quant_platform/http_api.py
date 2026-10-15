@@ -249,12 +249,36 @@ def phase9_payload(payload: dict, control_plane, simulation_registry, config=Non
         "paper_only": True,
         "execution_enabled": False,
     }
+    _persist_last_phase9(research, asset_class, index_code)
     result["llm_analysis"] = (
         _phase9_llm_analysis(result, config)
         if config is not None and config.ai_model_enabled
         else None
     )
     return result
+
+
+def _persist_last_phase9(research: dict, asset_class: str, index_code: str) -> None:
+    targets = research.get("targets", [])
+    symbols = [str(item["symbol"]) for item in targets]
+    weights = {str(item["symbol"]): float(item["weight"]) for item in targets}
+    benchmark_code = index_code if index_code and index_code != "manual" else "000300.SH"
+    path = Path("data/last_phase9.json")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "symbols": symbols,
+                "weights": weights,
+                "asset_class": asset_class,
+                "benchmark_code": benchmark_code,
+                "candidates": research.get("candidates", []),
+                "rank_ic": research.get("baseline", {}).get("rank_ic"),
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
 
 
 def _build_phase9_analysis_prompt(result: dict) -> str:
@@ -391,9 +415,31 @@ def forward_validation_payload(payload: dict, tracker: ForwardValidationTracker)
             symbols, weights, benchmark_code=benchmark_code,
             asset_class=asset_class, predictions=predictions,
         )
+    if action == "start_last":
+        return _start_forward_validation_from_last(tracker)
     if action == "update":
         return tracker.update()
     return tracker.report()
+
+
+def _start_forward_validation_from_last(tracker: ForwardValidationTracker) -> dict:
+    path = Path("data/last_phase9.json")
+    if not path.exists():
+        raise ValueError("还没有运行过组合研究，请先在组合研究页跑一次流水线")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    symbols = data.get("symbols", [])
+    if not symbols:
+        raise ValueError("最近一次组合研究没有产生目标仓位")
+    return tracker.start(
+        symbols,
+        data.get("weights"),
+        benchmark_code=str(data.get("benchmark_code", "000300.SH")),
+        asset_class=str(data.get("asset_class", "stock")),
+        predictions={
+            "candidates": data.get("candidates", []),
+            "rank_ic": data.get("rank_ic"),
+        },
+    )
 
 
 def simulation_create_payload(payload: dict, registry: PaperSimulationRegistry) -> dict:
@@ -930,7 +976,8 @@ _JSON_POST_ROUTES = {
     "/market-state", "/live-readiness", "/simulation/create",
     "/simulation/order", "/simulation/market", "/simulation/control",
     "/simulation/reconciliation", "/simulation/acceptance", "/backtest",
-    "/phase9/run", "/factor/symbol", "/validation/forward",
+    "/simulation/portfolio-report", "/phase9/run", "/factor/symbol",
+    "/validation/forward",
 }
 
 
@@ -1134,6 +1181,20 @@ def make_handler(
                     RuntimeError,
                     json.JSONDecodeError,
                 ) as error:
+                    body = {"error": str(error), "execution_enabled": False}
+                    status = 400
+                payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+            if route == "/simulation/portfolio-report":
+                try:
+                    body = forward_validation_tracker.report()
+                    status = 200
+                except (ValueError, TypeError, RuntimeError) as error:
                     body = {"error": str(error), "execution_enabled": False}
                     status = 400
                 payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
