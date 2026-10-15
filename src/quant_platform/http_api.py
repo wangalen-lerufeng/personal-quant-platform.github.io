@@ -34,6 +34,7 @@ from .phase9_service import run_phase9_alpha158
 from .pipeline import TargetPosition, plan_orders, submit_to_simulation
 from .providers import AkshareForexProvider, TushareDatasetProvider, TushareProvider, TushareStockDailyProvider
 from .risk import RiskEngine, RiskLimits, RiskMonitor
+from .run_history import get_store
 from .runtime import StrategyRuntime
 from .simulation import PaperSimulationRegistry
 from .simulation_acceptance import SimulationAcceptanceGate, reconcile_simulation_snapshot
@@ -249,7 +250,9 @@ def phase9_payload(payload: dict, control_plane, simulation_registry, config=Non
         "paper_only": True,
         "execution_enabled": False,
     }
-    _persist_last_phase9(research, asset_class, index_code)
+    phase9_run_id = _record_phase9_run(symbols, top_k, asset_class, index_code, result)
+    result["run_id"] = phase9_run_id
+    _persist_last_phase9(research, asset_class, index_code, phase9_run_id)
     result["llm_analysis"] = (
         _phase9_llm_analysis(result, config)
         if config is not None and config.ai_model_enabled
@@ -258,7 +261,27 @@ def phase9_payload(payload: dict, control_plane, simulation_registry, config=Non
     return result
 
 
-def _persist_last_phase9(research: dict, asset_class: str, index_code: str) -> None:
+def _record_phase9_run(symbols, top_k, asset_class, index_code, result, run_history=None) -> str:
+    store = run_history or get_store()
+    return store.add({
+        "kind": "phase9",
+        "asset_class": asset_class,
+        "index_code": index_code or "manual",
+        "top_k": top_k,
+        "symbols": list(symbols),
+        "candidates": result.get("candidates", []),
+        "targets": result.get("targets", []),
+        "baseline_rank_ic": result.get("baseline", {}).get("rank_ic"),
+        "ensemble_rank_ic": result.get("ensemble", {}).get("rank_ic"),
+        "orders": result.get("orders", []),
+        "rejected_count": len(result.get("rejected", [])),
+        "account_id": "paper-main",
+        "research_only": True,
+        "execution_enabled": False,
+    })
+
+
+def _persist_last_phase9(research: dict, asset_class: str, index_code: str, phase9_run_id: str) -> None:
     targets = research.get("targets", [])
     symbols = [str(item["symbol"]) for item in targets]
     weights = {str(item["symbol"]): float(item["weight"]) for item in targets}
@@ -268,6 +291,7 @@ def _persist_last_phase9(research: dict, asset_class: str, index_code: str) -> N
     path.write_text(
         json.dumps(
             {
+                "phase9_run_id": phase9_run_id,
                 "symbols": symbols,
                 "weights": weights,
                 "asset_class": asset_class,
@@ -402,8 +426,9 @@ def _factor_llm_analysis(result: dict, config) -> str | None:
         return f"[大模型解读失败] {error}"
 
 
-def forward_validation_payload(payload: dict, tracker: ForwardValidationTracker) -> dict:
+def forward_validation_payload(payload: dict, tracker: ForwardValidationTracker, run_history=None) -> dict:
     """Start / update / report a portfolio-vs-benchmark forward validation."""
+    store = run_history or get_store()
     action = str(payload.get("action", "report")).strip().lower()
     if action == "start":
         symbols = payload.get("symbols", [])
@@ -411,15 +436,45 @@ def forward_validation_payload(payload: dict, tracker: ForwardValidationTracker)
         benchmark_code = str(payload.get("benchmark_code", "000300.SH")).strip() or "000300.SH"
         asset_class = str(payload.get("asset_class", "stock")).strip().lower() or "stock"
         predictions = payload.get("predictions")
-        return tracker.start(
+        report = tracker.start(
             symbols, weights, benchmark_code=benchmark_code,
             asset_class=asset_class, predictions=predictions,
         )
+        _record_forward_start(report, store)
+        return report
     if action == "start_last":
-        return _start_forward_validation_from_last(tracker)
+        report = _start_forward_validation_from_last(tracker)
+        _record_forward_start(report, store, source=report.get("source_phase9_run_id"))
+        return report
     if action == "update":
-        return tracker.update()
+        report = tracker.update()
+        _record_forward_update(report, store)
+        return report
     return tracker.report()
+
+
+def _record_forward_start(report: dict, store, source: str | None = None) -> None:
+    store.add({
+        "kind": "forward",
+        "run_id": report.get("run_id"),
+        "source_phase9_run_id": source,
+        "benchmark_code": report.get("benchmark_code"),
+        "asset_class": report.get("asset_class"),
+        "entry_date": report.get("entry_date"),
+        "symbols": report.get("symbols"),
+        "weights": report.get("weights"),
+        "metrics": report.get("metrics"),
+        "per_symbol": report.get("per_symbol"),
+        "research_only": True,
+        "execution_enabled": False,
+    })
+
+
+def _record_forward_update(report: dict, store) -> None:
+    store.update(report.get("run_id"), {
+        "metrics": report.get("metrics"),
+        "per_symbol": report.get("per_symbol"),
+    })
 
 
 def _start_forward_validation_from_last(tracker: ForwardValidationTracker) -> dict:
@@ -430,7 +485,7 @@ def _start_forward_validation_from_last(tracker: ForwardValidationTracker) -> di
     symbols = data.get("symbols", [])
     if not symbols:
         raise ValueError("最近一次组合研究没有产生目标仓位")
-    return tracker.start(
+    report = tracker.start(
         symbols,
         data.get("weights"),
         benchmark_code=str(data.get("benchmark_code", "000300.SH")),
@@ -440,6 +495,8 @@ def _start_forward_validation_from_last(tracker: ForwardValidationTracker) -> di
             "rank_ic": data.get("rank_ic"),
         },
     )
+    report["source_phase9_run_id"] = data.get("phase9_run_id")
+    return report
 
 
 def simulation_create_payload(payload: dict, registry: PaperSimulationRegistry) -> dict:
@@ -958,6 +1015,8 @@ def api_payload(
         return {"data": research_tools.market_data(symbol, limit), "execution_enabled": False}
     if path == "/research/portfolio" and research_tools is not None:
         return {"portfolio": research_tools.portfolio_state(), "execution_enabled": False}
+    if path == "/run-history":
+        return {"runs": get_store().all(), "execution_enabled": False, "paper_only": True}
     if path == "/simulation/state" and simulation_registry is not None:
         account_id = query.get("account_id", [None])[0]
         if account_id is None:
