@@ -257,7 +257,14 @@ def phase9_payload(payload: dict, control_plane, simulation_registry, config=Non
         feature_expressions=feature_expressions, start_date=start_date, end_date=end_date,
     )
     _persist_last_phase9(research, asset_class, index_code, run_id, account_id)
+    _save_last_phase9_result(result)
     return result
+
+
+def _save_last_phase9_result(result: dict) -> None:
+    path = Path("data/last_phase9_result.json")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
 
 
 _DAILY_DATASET = {"etf": "fund_daily", "stock": "daily", "hk": "hk_daily"}
@@ -1009,6 +1016,14 @@ def api_payload(
         return {"portfolio": research_tools.portfolio_state(), "execution_enabled": False}
     if path == "/run-history":
         return {"runs": get_store().all(), "execution_enabled": False, "paper_only": True}
+    if path == "/phase9/last":
+        result_path = Path("data/last_phase9_result.json")
+        if result_path.exists():
+            try:
+                return json.loads(result_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                pass
+        return {"available": False, "execution_enabled": False, "paper_only": True}
     if path == "/simulation/state" and simulation_registry is not None:
         account_id = query.get("account_id", [None])[0]
         if account_id is None:

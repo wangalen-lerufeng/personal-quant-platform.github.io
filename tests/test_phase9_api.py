@@ -26,6 +26,19 @@ def _fake_research():
 
 
 class Phase9ApiTests(unittest.TestCase):
+    def setUp(self):
+        self._patchers = [
+            patch("quant_platform.http_api._record_phase9_run"),
+            patch("quant_platform.http_api._persist_last_phase9"),
+            patch("quant_platform.http_api._save_last_phase9_result"),
+        ]
+        for p in self._patchers:
+            p.start()
+
+    def tearDown(self):
+        for p in self._patchers:
+            p.stop()
+
     def test_phase9_payload_submits_to_paper_session(self):
         registry = PaperSimulationRegistry(SimulationAccountStore(":memory:"))
         with patch("quant_platform.http_api.run_phase9_alpha158", return_value=_fake_research()), patch("quant_platform.http_api._fill_paper_orders"):
