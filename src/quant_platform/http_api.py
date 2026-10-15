@@ -309,6 +309,28 @@ def _phase9_llm_analysis(result: dict, config) -> str | None:
         return f"[大模型解读失败] {error}"
 
 
+def factor_symbol_payload(payload: dict) -> dict:
+    """Compute factor time series + stats for a single symbol."""
+    from .qlib_alpha158 import analyze_single_symbol_factors
+
+    symbol = str(payload.get("symbol", "")).strip()
+    factor_expressions = payload.get("factor_expressions", [])
+    if isinstance(factor_expressions, str):
+        factor_expressions = [
+            item.strip() for item in factor_expressions.replace("\n", ",").split(",") if item.strip()
+        ]
+    start_date = str(payload.get("start_date", "")).strip()
+    end_date = str(payload.get("end_date", "")).strip() or date.today().isoformat()
+    asset_class = str(payload.get("asset_class", "etf")).strip().lower() or "etf"
+    if not symbol:
+        raise ValueError("symbol is required")
+    if not start_date:
+        raise ValueError("start_date is required")
+    return analyze_single_symbol_factors(
+        symbol, factor_expressions, start_date, end_date, asset_class=asset_class,
+    )
+
+
 def simulation_create_payload(payload: dict, registry: PaperSimulationRegistry) -> dict:
     account_id = str(payload.get("account_id", "")).strip()
     if not account_id:
@@ -843,7 +865,7 @@ _JSON_POST_ROUTES = {
     "/market-state", "/live-readiness", "/simulation/create",
     "/simulation/order", "/simulation/market", "/simulation/control",
     "/simulation/reconciliation", "/simulation/acceptance", "/backtest",
-    "/phase9/run",
+    "/phase9/run", "/factor/symbol",
 }
 
 
@@ -1064,6 +1086,27 @@ def make_handler(
                         simulation_registry,
                         config,
                     )
+                    status = 200
+                except (
+                    ValueError,
+                    KeyError,
+                    TypeError,
+                    RuntimeError,
+                    json.JSONDecodeError,
+                ) as error:
+                    body = {"error": str(error), "execution_enabled": False}
+                    status = 400
+                payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+            if route == "/factor/symbol":
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                    body = factor_symbol_payload(json.loads(self.rfile.read(length)))
                     status = 200
                 except (
                     ValueError,

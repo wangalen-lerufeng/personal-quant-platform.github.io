@@ -1,11 +1,12 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
 
-from quant_platform.qlib_alpha158 import run_alpha158
+from quant_platform.qlib_alpha158 import analyze_single_symbol_factors, run_alpha158
 from quant_platform.qlib_dump import dump_etf_to_qlib
 
 SYMBOLS = ["510300.SH", "510500.SH", "159919.SZ", "512880.SH", "515790.SH"]
@@ -56,6 +57,29 @@ class Alpha158Tests(unittest.TestCase):
             )
         self.assertFalse(result["scores"].empty)
         self.assertTrue(result["candidates"])
+
+
+class SingleSymbolFactorTests(unittest.TestCase):
+    def test_analyze_single_symbol_factors(self):
+        symbol = "09660.HK"
+        frame = _synthetic_frame([symbol], n_days=100)
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("quant_platform.qlib_dump.build_ohlcv_panel", return_value=frame):
+                result = analyze_single_symbol_factors(
+                    symbol, ["Ref($close,20)/$close-1", "Std($close,20)/$close"],
+                    "2024-01-01", "2024-10-01",
+                    qlib_dir=Path(tmp) / "qlib_factor", asset_class="hk",
+                )
+        self.assertEqual(result["symbol"], symbol)
+        self.assertEqual(len(result["factors"]), 2)
+        self.assertFalse(result["execution_enabled"])
+        self.assertTrue(result["research_only"])
+        for factor in result["factors"]:
+            self.assertIn("mean", factor)
+            self.assertIn("latest", factor)
+            self.assertIn("percentile", factor)
+            self.assertIn("ic", factor)
+            self.assertTrue(factor["series"])
 
 
 if __name__ == "__main__":

@@ -8,6 +8,71 @@ must already be dumped to Qlib's ``.bin`` format via ``qlib_dump``.
 import pandas as pd
 
 DEFAULT_LABEL = (["Ref($close, -1)/$close - 1"], ["LABEL0"])
+FORWARD_RETURN_EXPR = "Ref($close, -1)/$close - 1"
+
+
+def analyze_single_symbol_factors(
+    symbol,
+    factor_expressions,
+    start_date,
+    end_date,
+    *,
+    qlib_dir: str = "data/qlib_factor",
+    asset_class: str = "etf",
+) -> dict:
+    """Compute factor time series for a single symbol and return per-factor stats."""
+    import numpy as np
+    from qlib.data import D
+
+    from .qlib_dump import build_ohlcv_panel, dump_etf_to_qlib, init_qlib
+
+    symbol = str(symbol).strip()
+    expressions = [str(expr).strip() for expr in factor_expressions if str(expr).strip()]
+    if not symbol:
+        raise ValueError("symbol is required")
+    if not expressions:
+        raise ValueError("at least one factor expression is required")
+
+    ohlcv = build_ohlcv_panel([symbol], start_date, end_date, asset_class=asset_class)
+    dump_etf_to_qlib(ohlcv, qlib_dir)
+    init_qlib(qlib_dir)
+
+    frame = D.features(
+        [symbol], expressions + [FORWARD_RETURN_EXPR], start_time=start_date, end_time=end_date
+    ).dropna()
+    if frame.empty:
+        raise ValueError(f"未取到 {symbol} 的因子数据，请检查代码/日期/权限")
+
+    dates = [pd.Timestamp(day).strftime("%Y-%m-%d") for day in frame.index.get_level_values("datetime")]
+    forward = frame[FORWARD_RETURN_EXPR].to_numpy()
+
+    factors = []
+    for index, expr in enumerate(expressions):
+        values = frame[expr].to_numpy()
+        mean = float(np.mean(values))
+        std = float(np.std(values))
+        latest = float(values[-1])
+        percentile = float((values < latest).mean())
+        ic = float(np.corrcoef(values, forward)[0, 1]) if len(values) > 2 else None
+        factors.append({
+            "name": f"F{index}",
+            "expression": expr,
+            "mean": mean,
+            "std": std,
+            "latest": latest,
+            "percentile": percentile,
+            "ic": ic,
+            "series": [{"date": dates[i], "value": float(values[i])} for i in range(len(values))],
+        })
+
+    return {
+        "symbol": symbol,
+        "start": dates[0],
+        "end": dates[-1],
+        "factors": factors,
+        "research_only": True,
+        "execution_enabled": False,
+    }
 
 
 def _make_custom_handler(expressions, instruments, start_time, end_time):
