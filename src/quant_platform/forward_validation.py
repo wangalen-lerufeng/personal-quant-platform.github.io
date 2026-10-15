@@ -30,6 +30,7 @@ class ForwardValidationTracker:
         benchmark_code: str = "000300.SH",
         asset_class: str = "stock",
         predictions: dict | None = None,
+        source_phase9_run_id: str | None = None,
     ) -> dict:
         symbols = [str(s).strip() for s in (symbols or []) if str(s).strip()]
         if not symbols:
@@ -61,6 +62,7 @@ class ForwardValidationTracker:
             "latest_prices": dict(entry_prices),
             "benchmark_entry": benchmark_entry,
             "predictions": predictions or {},
+            "source_phase9_run_id": source_phase9_run_id,
             "records": [{
                 "date": max([benchmark_date, *entry_dates.values()]) if entry_dates else today,
                 "strategy_nav": 1.0,
@@ -155,6 +157,7 @@ class ForwardValidationTracker:
             "symbols": symbols,
             "weights": weights,
             "predictions": state.get("predictions", {}),
+            "source_phase9_run_id": state.get("source_phase9_run_id"),
             "dates": [r["date"] for r in records],
             "strategy_nav": strategy_nav,
             "benchmark_nav": benchmark_nav,

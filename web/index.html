@@ -337,6 +337,10 @@ Sum(Greater($close-Ref($close,1), 0), 14)/(Sum(Abs($close-Ref($close,1)), 14)+1e
           const accountLink = r.account_id ? `<a href="javascript:void(0)" onclick="jumpToAccount('${esc(r.account_id)}')" style="color:var(--blue);text-decoration:underline;cursor:pointer" title="跳转到该仿真账户">${esc(r.account_id)}</a>` : '—';
           html += `<div style="margin-top:8px;font-size:12px">候选池 ${esc((r.candidates || []).join(', ') || '无')} · 目标仓位 ${esc((r.targets || []).map(t => t.symbol + ':' + t.weight.toFixed(4)).join(', ') || '无')}</div>`;
           html += `<div style="margin-top:4px;font-size:12px;color:var(--muted)">下单 ${(r.orders || []).length} 笔（账户 ${accountLink}）· Rank IC LGB ${fmtNum(r.baseline_rank_ic, 4)} / DEnsemble ${fmtNum(r.ensemble_rank_ic, 4)}</div>`;
+          if (r.forward) {
+            const fm = r.forward.metrics || {};
+            html += `<div style="margin-top:8px;font-size:12px;background:#f0faf5;border:1px solid #cdeede;border-radius:8px;padding:8px 10px"><span style="color:var(--muted)">前向验证（基准 ${esc(r.forward.benchmark_code)} · 基准日 ${esc(r.forward.entry_date)} · ${fm.sample_days ?? '—'} 日）</span>　策略 ${fmtPct(fm.strategy_cumulative_return)} · 基准 ${fmtPct(fm.benchmark_cumulative_return)} · <span style="font-weight:700;color:${(fm.excess_return ?? 0) >= 0 ? '#16a34a' : '#e03131'}">超额 ${fmtPct(fm.excess_return)}</span> · 回撤 ${fmtPct(fm.max_drawdown)}</div>`;
+          }
         } else {
           const m = r.metrics || {};
           html += `<div style="margin-top:8px;font-size:12px">基准日 ${esc(r.entry_date)} · 基准 ${esc(r.benchmark_code)} · ${m.sample_days ?? '—'} 交易日</div>`;

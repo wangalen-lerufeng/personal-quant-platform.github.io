@@ -486,7 +486,7 @@ def forward_validation_payload(payload: dict, tracker: ForwardValidationTracker,
         return report
     if action == "start_last":
         report = _start_forward_validation_from_last(tracker)
-        _record_forward_start(report, store, source=report.get("source_phase9_run_id"))
+        _record_forward_start(report, store)
         return report
     if action == "update":
         report = tracker.update()
@@ -495,11 +495,8 @@ def forward_validation_payload(payload: dict, tracker: ForwardValidationTracker,
     return tracker.report()
 
 
-def _record_forward_start(report: dict, store, source: str | None = None) -> None:
-    store.add({
-        "kind": "forward",
-        "run_id": report.get("run_id"),
-        "source_phase9_run_id": source,
+def _forward_snapshot(report: dict) -> dict:
+    return {
         "benchmark_code": report.get("benchmark_code"),
         "asset_class": report.get("asset_class"),
         "entry_date": report.get("entry_date"),
@@ -507,16 +504,33 @@ def _record_forward_start(report: dict, store, source: str | None = None) -> Non
         "weights": report.get("weights"),
         "metrics": report.get("metrics"),
         "per_symbol": report.get("per_symbol"),
-        "research_only": True,
-        "execution_enabled": False,
-    })
+    }
+
+
+def _record_forward_start(report: dict, store) -> None:
+    source = report.get("source_phase9_run_id")
+    snapshot = _forward_snapshot(report)
+    if source:
+        store.update(source, {"forward": snapshot})
+    else:
+        store.add({
+            "kind": "forward",
+            "run_id": report.get("run_id"),
+            **snapshot,
+            "research_only": True,
+            "execution_enabled": False,
+        })
 
 
 def _record_forward_update(report: dict, store) -> None:
-    store.update(report.get("run_id"), {
-        "metrics": report.get("metrics"),
-        "per_symbol": report.get("per_symbol"),
-    })
+    source = report.get("source_phase9_run_id")
+    if source:
+        store.update(source, {"forward": _forward_snapshot(report)})
+    else:
+        store.update(report.get("run_id"), {
+            "metrics": report.get("metrics"),
+            "per_symbol": report.get("per_symbol"),
+        })
 
 
 def _start_forward_validation_from_last(tracker: ForwardValidationTracker) -> dict:
@@ -527,7 +541,7 @@ def _start_forward_validation_from_last(tracker: ForwardValidationTracker) -> di
     symbols = data.get("symbols", [])
     if not symbols:
         raise ValueError("最近一次组合研究没有产生目标仓位")
-    report = tracker.start(
+    return tracker.start(
         symbols,
         data.get("weights"),
         benchmark_code=str(data.get("benchmark_code", "000300.SH")),
@@ -536,9 +550,8 @@ def _start_forward_validation_from_last(tracker: ForwardValidationTracker) -> di
             "candidates": data.get("candidates", []),
             "rank_ic": data.get("rank_ic"),
         },
+        source_phase9_run_id=data.get("phase9_run_id"),
     )
-    report["source_phase9_run_id"] = data.get("phase9_run_id")
-    return report
 
 
 def run_history_delete_payload(payload: dict, simulation_registry=None) -> dict:
