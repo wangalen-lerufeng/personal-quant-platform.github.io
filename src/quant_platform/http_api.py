@@ -316,6 +316,7 @@ def _record_phase9_run(
         "orders": result.get("orders", []),
         "rejected_count": len(result.get("rejected", [])),
         "account_id": result.get("account_id"),
+        "detail": result,
         "research_only": True,
         "execution_enabled": False,
     }

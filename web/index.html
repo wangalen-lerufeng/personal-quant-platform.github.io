@@ -301,15 +301,27 @@ Sum(Greater($close-Ref($close,1), 0), 14)/(Sum(Abs($close-Ref($close,1)), 14)+1e
         runPortfolioReport();
       });
     }
+    let _runHistoryCache = [];
+    function togglePhase9Detail(runId) {
+      const el = document.getElementById('p9detail-' + runId);
+      if (!el) return;
+      if (el.dataset.rendered !== '1') {
+        const rec = _runHistoryCache.find(r => r.run_id === runId);
+        if (rec && rec.detail) { el.innerHTML = renderPhase9Result(rec.detail); el.dataset.rendered = '1'; }
+      }
+      el.style.display = el.style.display === 'none' ? '' : 'none';
+    }
     function renderRunHistory(runs) {
+      _runHistoryCache = runs || [];
       if (!runs || !runs.length) return '<pre style="margin:0;font-family:inherit">暂无运行历史。跑一次「组合研究流水线」或「前向验证」后这里会记录。</pre>';
       let html = '';
       for (const r of runs) {
         const isPhase9 = r.kind === 'phase9';
         const badge = isPhase9 ? '组合研究' : '前向验证';
         const color = isPhase9 ? '#3e72e8' : '#16a477';
+        const detailBtn = (isPhase9 && r.detail) ? `<button onclick="togglePhase9Detail('${esc(r.run_id)}')" style="padding:4px 10px;font-size:12px;background:#edf3ff;color:var(--blue);border:1px solid #cfe0fb;border-radius:8px;cursor:pointer">展开完整结果</button>` : '';
         html += '<div style="border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:10px;background:#fff">';
-        html += `<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px"><span style="font-weight:700">${esc(r.run_id)}</span><span style="display:flex;align-items:center;gap:8px"><span style="display:inline-flex;padding:2px 10px;border-radius:99px;font-size:12px;font-weight:700;background:${color}1a;color:${color}">${badge}</span><button onclick="deleteRunHistory('${esc(r.run_id)}')" style="padding:4px 10px;font-size:12px;background:#fff0f0;color:#a33;border:1px solid #f2d0d0;border-radius:8px;cursor:pointer">删除</button></span></div>`;
+        html += `<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px"><span style="font-weight:700">${esc(r.run_id)}</span><span style="display:flex;align-items:center;gap:8px"><span style="display:inline-flex;padding:2px 10px;border-radius:99px;font-size:12px;font-weight:700;background:${color}1a;color:${color}">${badge}</span>${detailBtn}<button onclick="deleteRunHistory('${esc(r.run_id)}')" style="padding:4px 10px;font-size:12px;background:#fff0f0;color:#a33;border:1px solid #f2d0d0;border-radius:8px;cursor:pointer">删除</button></span></div>`;
         html += `<div style="color:var(--muted);font-size:12px;margin-top:2px">${esc(r.created_at || '')}${r.kind === 'forward' && r.source_phase9_run_id ? ' · 来自 ' + esc(r.source_phase9_run_id) : ''}</div>`;
         if (isPhase9) {
           const b = r.backtest || {};
@@ -340,6 +352,9 @@ Sum(Greater($close-Ref($close,1), 0), 14)/(Sum(Abs($close-Ref($close,1)), 14)+1e
           if (r.forward) {
             const fm = r.forward.metrics || {};
             html += `<div style="margin-top:8px;font-size:12px;background:#f0faf5;border:1px solid #cdeede;border-radius:8px;padding:8px 10px"><span style="color:var(--muted)">前向验证（基准 ${esc(r.forward.benchmark_code)} · 基准日 ${esc(r.forward.entry_date)} · ${fm.sample_days ?? '—'} 日）</span>　策略 ${fmtPct(fm.strategy_cumulative_return)} · 基准 ${fmtPct(fm.benchmark_cumulative_return)} · <span style="font-weight:700;color:${(fm.excess_return ?? 0) >= 0 ? '#16a34a' : '#e03131'}">超额 ${fmtPct(fm.excess_return)}</span> · 回撤 ${fmtPct(fm.max_drawdown)}</div>`;
+          }
+          if (r.detail) {
+            html += `<div id="p9detail-${esc(r.run_id)}" data-rendered="0" style="display:none;margin-top:10px;border-top:1px dashed var(--line);padding-top:10px"></div>`;
           }
         } else {
           const m = r.metrics || {};
