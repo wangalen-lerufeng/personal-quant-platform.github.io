@@ -49,7 +49,7 @@ class KeywordToSymbolsTests(unittest.TestCase):
                 "metadata": {"total_results": 2, "search_time_ms": 100},
             },
         }
-        with patch("quant_platform.anysearch.requests.post", return_value=FakeResponse(payload)):
+        with patch("quant_platform.anysearch.requests.post", return_value=FakeResponse(payload)), patch("quant_platform.anysearch._stock_lookup", return_value=({}, None)):
             symbols = keyword_to_symbols("新能源")
         self.assertIn("300750.SZ", symbols)
         self.assertIn("600519.SH", symbols)
@@ -64,6 +64,36 @@ class KeywordToSymbolsTests(unittest.TestCase):
     def test_empty_keyword_raises(self):
         with self.assertRaisesRegex(ValueError, "keyword"):
             keyword_to_symbols("   ")
+
+    def test_maps_company_names_to_codes(self):
+        payload = {
+            "code": 0, "message": "success", "request_id": "r",
+            "data": {
+                "results": [
+                    {"title": "人工智能龙头", "content": "科大讯飞和宁德时代是人工智能龙头"},
+                ],
+                "metadata": {"total_results": 1, "search_time_ms": 10},
+            },
+        }
+        lookup = ({"科大讯飞": "002230.SZ", "宁德时代": "300750.SZ", "贵州茅台": "600519.SH"}, {"002230.SZ", "300750.SZ", "600519.SH"})
+        with patch("quant_platform.anysearch.requests.post", return_value=FakeResponse(payload)), patch("quant_platform.anysearch._stock_lookup", return_value=lookup):
+            symbols = keyword_to_symbols("人工智能")
+        self.assertIn("002230.SZ", symbols)
+        self.assertIn("300750.SZ", symbols)
+        self.assertNotIn("600519.SH", symbols)
+
+    def test_filters_invalid_codes(self):
+        payload = {
+            "code": 0, "message": "success", "request_id": "r",
+            "data": {
+                "results": [{"title": "x", "content": "代码 283445 和 600519"}],
+                "metadata": {"total_results": 1, "search_time_ms": 10},
+            },
+        }
+        lookup = ({}, {"600519.SH"})
+        with patch("quant_platform.anysearch.requests.post", return_value=FakeResponse(payload)), patch("quant_platform.anysearch._stock_lookup", return_value=lookup):
+            symbols = keyword_to_symbols("x")
+        self.assertEqual(symbols, ["600519.SH"])
 
 
 class AnysearchCredentialsTests(unittest.TestCase):

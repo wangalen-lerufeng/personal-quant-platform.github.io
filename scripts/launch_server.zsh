@@ -12,6 +12,9 @@ fi
 if [[ -f "${PROJECT_DIR}/secrets/tushare.env" ]]; then
   source "${PROJECT_DIR}/secrets/tushare.env"
 fi
+if [[ -f "${PROJECT_DIR}/secrets/anysearch.env" ]]; then
+  source "${PROJECT_DIR}/secrets/anysearch.env"
+fi
 
 # Project-specific names prevent shell profiles from replacing the safe
 # loopback binding with a machine hostname.

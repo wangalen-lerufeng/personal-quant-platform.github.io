@@ -252,3 +252,13 @@ class TushareDatasetProvider:
                 if str(row["trade_date"]).replace("-", "") == latest
             }
         )
+
+    def fetch_all_stocks(self) -> list[dict]:
+        """Return all listed A-share stocks (ts_code + name) from stock_basic."""
+        client = _create_tushare_client(self.token_env)
+        frame = client.stock_basic(list_status="L", fields="ts_code,name")
+        if frame is None or frame.empty:
+            return []
+        import json
+
+        return json.loads(frame.to_json(orient="records", date_format="iso", force_ascii=False))
