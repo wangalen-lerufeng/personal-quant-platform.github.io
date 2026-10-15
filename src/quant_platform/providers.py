@@ -188,6 +188,7 @@ class TushareDatasetProvider:
         "fund_daily",
         "daily",
         "index_weight",
+        "index_daily",
         "hk_daily",
     }
 

@@ -21,6 +21,7 @@ from .backtest import BacktestEngine, FuturesRolloverRule, MarketExecutionPolicy
 from .config import RuntimeConfig
 from .domain import AssetClass, MarketEvent, OrderIntent, OrderSide
 from .factor_analysis import analyze_factor, analyze_factor_panel
+from .forward_validation import ForwardValidationTracker
 from .fundamental_analysis import analyze_fundamental_datasets
 from .health import health_snapshot
 from .llm_client import OpenAICompatibleChatClient
@@ -375,6 +376,24 @@ def _factor_llm_analysis(result: dict, config) -> str | None:
         return client.complete(prompt)
     except Exception as error:
         return f"[大模型解读失败] {error}"
+
+
+def forward_validation_payload(payload: dict, tracker: ForwardValidationTracker) -> dict:
+    """Start / update / report a portfolio-vs-benchmark forward validation."""
+    action = str(payload.get("action", "report")).strip().lower()
+    if action == "start":
+        symbols = payload.get("symbols", [])
+        weights = payload.get("weights")
+        benchmark_code = str(payload.get("benchmark_code", "000300.SH")).strip() or "000300.SH"
+        asset_class = str(payload.get("asset_class", "stock")).strip().lower() or "stock"
+        predictions = payload.get("predictions")
+        return tracker.start(
+            symbols, weights, benchmark_code=benchmark_code,
+            asset_class=asset_class, predictions=predictions,
+        )
+    if action == "update":
+        return tracker.update()
+    return tracker.report()
 
 
 def simulation_create_payload(payload: dict, registry: PaperSimulationRegistry) -> dict:
@@ -911,7 +930,7 @@ _JSON_POST_ROUTES = {
     "/market-state", "/live-readiness", "/simulation/create",
     "/simulation/order", "/simulation/market", "/simulation/control",
     "/simulation/reconciliation", "/simulation/acceptance", "/backtest",
-    "/phase9/run", "/factor/symbol",
+    "/phase9/run", "/factor/symbol", "/validation/forward",
 }
 
 
@@ -960,6 +979,7 @@ def make_handler(
     simulation_registry: PaperSimulationRegistry | None = None,
 ):
     simulation_registry = simulation_registry or PaperSimulationRegistry()
+    forward_validation_tracker = ForwardValidationTracker()
     csrf_token = secrets.token_urlsafe(32)
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
@@ -1131,6 +1151,29 @@ def make_handler(
                         control_plane,
                         simulation_registry,
                         config,
+                    )
+                    status = 200
+                except (
+                    ValueError,
+                    KeyError,
+                    TypeError,
+                    RuntimeError,
+                    json.JSONDecodeError,
+                ) as error:
+                    body = {"error": str(error), "execution_enabled": False}
+                    status = 400
+                payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+            if route == "/validation/forward":
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                    body = forward_validation_payload(
+                        json.loads(self.rfile.read(length)), forward_validation_tracker
                     )
                     status = 200
                 except (
