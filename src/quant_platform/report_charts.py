@@ -111,6 +111,28 @@ def compute_report_charts(
     strat_ann_vol = float(strategy_rets_arr.std(ddof=1) * np.sqrt(annualization)) if n > 1 else 0.0
     sharpe = strategy_ann / strat_ann_vol if strat_ann_vol > 0 else None
 
+    benchmark_ann = float(benchmark_nav[-1] ** (annualization / max(1, n)) - 1.0) if n else 0.0
+    bench_ann_vol = float(benchmark_rets_arr.std(ddof=1) * np.sqrt(annualization)) if n > 1 else 0.0
+    beta = alpha = sortino = None
+    if n > 1:
+        cov = float(np.cov(strategy_rets_arr, benchmark_rets_arr)[0, 1])
+        var_b = float(np.var(benchmark_rets_arr, ddof=1))
+        if var_b > 0:
+            beta = cov / var_b
+            alpha = strategy_ann - beta * benchmark_ann
+    downside = strategy_rets_arr[strategy_rets_arr < 0]
+    downside_dev = float(downside.std(ddof=1) * np.sqrt(annualization)) if len(downside) > 1 else None
+    if downside_dev and downside_dev > 0:
+        sortino = strategy_ann / downside_dev
+    daily_win_rate = float((strategy_rets_arr > 0).mean()) if n else None
+    wins = strategy_rets_arr[strategy_rets_arr > 0]
+    losses = strategy_rets_arr[strategy_rets_arr < 0]
+    profit_loss_ratio = None
+    if len(wins) and len(losses):
+        avg_loss = float(abs(losses.mean()))
+        if avg_loss > 0:
+            profit_loss_ratio = float(wins.mean()) / avg_loss
+
     valid_ics = [ic for ic in rank_ics if ic is not None and not np.isnan(ic)]
     mean_ic = float(np.mean(valid_ics)) if valid_ics else None
     ic_std = float(np.std(valid_ics)) if len(valid_ics) > 1 else None
@@ -132,7 +154,13 @@ def compute_report_charts(
             "benchmark_cumulative_return": round(float(benchmark_nav[-1] - 1.0), 4),
             "annualized_return": round(strategy_ann, 4),
             "annualized_volatility": round(strat_ann_vol, 4),
+            "benchmark_volatility": round(bench_ann_vol, 4),
             "sharpe": round(sharpe, 4) if sharpe is not None else None,
+            "alpha": round(alpha, 4) if alpha is not None else None,
+            "beta": round(beta, 4) if beta is not None else None,
+            "sortino": round(sortino, 4) if sortino is not None else None,
+            "daily_win_rate": round(daily_win_rate, 4) if daily_win_rate is not None else None,
+            "profit_loss_ratio": round(profit_loss_ratio, 4) if profit_loss_ratio is not None else None,
             "mean_turnover": round(float(np.mean(turnovers)), 4),
             "mean_ic": round(mean_ic, 4) if mean_ic is not None else None,
             "ic_ir": round(ic_ir, 4) if ic_ir is not None else None,
