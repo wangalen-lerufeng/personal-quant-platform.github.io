@@ -44,6 +44,23 @@ class RunHistoryStoreTests(unittest.TestCase):
             self.assertEqual(runs[0]["run_id"], "p9-new")
             self.assertEqual(runs[1]["run_id"], "p9-old")
 
+    def test_delete_removes_record(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = RunHistoryStore(store_path=str(Path(tmp) / "history.json"))
+            store.add({"run_id": "p9-a", "kind": "phase9"})
+            store.add({"run_id": "fv-b", "kind": "forward"})
+            result = store.delete("p9-a")
+            self.assertEqual(result["removed"], 1)
+            self.assertEqual([r["run_id"] for r in store.all()], ["fv-b"])
+
+    def test_delete_missing_record_is_noop(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = RunHistoryStore(store_path=str(Path(tmp) / "history.json"))
+            store.add({"run_id": "p9-a", "kind": "phase9"})
+            result = store.delete("does-not-exist")
+            self.assertEqual(result["removed"], 0)
+            self.assertEqual(len(store.all()), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

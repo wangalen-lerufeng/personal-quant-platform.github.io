@@ -49,6 +49,16 @@ class RunHistoryStore:
         runs = self._load().get("runs", [])
         return sorted(runs, key=lambda r: r.get("created_at", ""), reverse=True)
 
+    def delete(self, run_id: str) -> dict:
+        """Remove a record by run_id; returns how many rows were removed."""
+        state = self._load()
+        before = len(state.get("runs", []))
+        state["runs"] = [r for r in state.get("runs", []) if r.get("run_id") != run_id]
+        removed = before - len(state["runs"])
+        if removed:
+            self._save(state)
+        return {"run_id": run_id, "removed": removed}
+
     @staticmethod
     def _new_id(kind: str) -> str:
         return f"{kind}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"

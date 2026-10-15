@@ -512,6 +512,15 @@ def _start_forward_validation_from_last(tracker: ForwardValidationTracker) -> di
     return report
 
 
+def run_history_delete_payload(payload: dict) -> dict:
+    run_id = str(payload.get("run_id", "")).strip()
+    if not run_id:
+        raise ValueError("run_id is required")
+    result = get_store().delete(run_id)
+    result.update({"paper_only": True, "execution_enabled": False})
+    return result
+
+
 def simulation_create_payload(payload: dict, registry: PaperSimulationRegistry) -> dict:
     account_id = str(payload.get("account_id", "")).strip()
     if not account_id:
@@ -1063,7 +1072,7 @@ _JSON_POST_ROUTES = {
     "/simulation/order", "/simulation/market", "/simulation/control",
     "/simulation/reconciliation", "/simulation/acceptance", "/backtest",
     "/simulation/portfolio-report", "/simulation/delete", "/simulation/account-report",
-    "/phase9/run", "/factor/symbol",
+    "/phase9/run", "/factor/symbol", "/run-history/delete",
     "/validation/forward",
 }
 
@@ -1302,6 +1311,27 @@ def make_handler(
                         simulation_registry,
                         config,
                     )
+                    status = 200
+                except (
+                    ValueError,
+                    KeyError,
+                    TypeError,
+                    RuntimeError,
+                    json.JSONDecodeError,
+                ) as error:
+                    body = {"error": str(error), "execution_enabled": False}
+                    status = 400
+                payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+            if route == "/run-history/delete":
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                    body = run_history_delete_payload(json.loads(self.rfile.read(length)))
                     status = 200
                 except (
                     ValueError,
