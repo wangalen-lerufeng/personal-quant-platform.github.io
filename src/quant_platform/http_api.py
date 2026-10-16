@@ -257,6 +257,7 @@ def phase9_payload(payload: dict, control_plane, simulation_registry, config=Non
         **research,
         "run_id": run_id,
         "account_id": account_id,
+        "keyword": keyword,
         "orders": [{"symbol": order.symbol, "side": order.side.value, "quantity": order.quantity} for order in plan.orders],
         "rejected": [dict(item) for item in plan.rejected],
         "audit": [{"stage": entry.stage, "symbol": entry.symbol, "detail": dict(entry.detail)} for entry in plan.audit],
