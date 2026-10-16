@@ -10,10 +10,27 @@ from .domain import AssetClass, MarketEvent
 from .data_quality import validate_events
 
 
+def _bypass_proxy_for_tushare() -> None:
+    """Exclude Tushare (a mainland API) from any local HTTP proxy.
+
+    Tushare uses ``requests`` which honours ``HTTP(S)_PROXY``; routing it through a
+    local Clash proxy can time out. Add its hosts to ``NO_PROXY`` so it connects
+    directly.
+    """
+    entries = [d.strip() for d in os.environ.get("NO_PROXY", "").split(",") if d.strip()]
+    for domain in (".tushare.pro", ".waditu.com"):
+        if domain not in entries:
+            entries.append(domain)
+    value = ",".join(entries)
+    os.environ["NO_PROXY"] = value
+    os.environ["no_proxy"] = value
+
+
 def _create_tushare_client(token_env: str):
     token = (os.getenv(token_env) or "").strip()
     if not token:
         raise RuntimeError(f"Tushare token is not configured in {token_env}")
+    _bypass_proxy_for_tushare()
     try:
         import tushare as ts
     except ImportError as error:
