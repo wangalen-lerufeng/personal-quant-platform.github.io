@@ -246,6 +246,8 @@ def run_phase9_alpha158(
     asset_class: str = "etf",
     feature_expressions=None,
     compute_factor_ic: bool = True,
+    min_ic: float = 0.02,
+    min_icir: float = 0.15,
 ) -> dict:
     """Run the Phase 9 chain with Qlib's Alpha158 (or custom) factors for the candidate pool."""
     if top_k < 1:
@@ -284,6 +286,7 @@ def run_phase9_alpha158(
         compute_factor_ic_report(
             symbols, start_date, end_date, qlib_dir=qlib_dir,
             feature_expressions=feature_expressions,
+            min_ic=min_ic, min_icir=min_icir,
         )
         if compute_factor_ic
         else None
