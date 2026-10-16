@@ -226,9 +226,11 @@ def phase9_payload(payload: dict, control_plane, simulation_registry, config=Non
             item.strip() for item in feature_expressions.replace("\n", ",").split(",") if item.strip()
         ]
 
+    compute_factor_ic = bool(payload.get("factor_ic", True))
     research = run_phase9_alpha158(
         symbols, start_date, end_date, top_k=top_k, asset_class=asset_class,
         feature_expressions=feature_expressions or None,
+        compute_factor_ic=compute_factor_ic,
     )
     risk_engine = control_plane.risk_engine if control_plane is not None else RiskEngine(RiskLimits())
     targets = [
