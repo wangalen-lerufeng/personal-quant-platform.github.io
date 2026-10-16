@@ -118,6 +118,8 @@ def build_etf_panel(
             liquid_symbols(panel, window=amount_window, min_median_amount=min_median_amount)
         )
         panel = panel[panel["symbol"].isin(liquid)]
+    # Tushare returns rows newest-first; sort ascending so shift(-N) is the forward return.
+    panel = panel.sort_values(["symbol", "trade_date"])
     panel = add_forward_returns(panel, horizons=horizons)
     panel = panel.drop_duplicates(subset=["symbol", "trade_date"], keep="last")
     panel["timestamp"] = pd.to_datetime(panel["trade_date"], errors="coerce")

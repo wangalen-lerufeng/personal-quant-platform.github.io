@@ -30,6 +30,9 @@ def init_qlib(provider_uri) -> None:
 
 
 def _fetch_symbol_ohlcv(symbol, provider, daily_dataset, start_date, end_date):
+    # Tushare A-share uses amount in 千元 and vol in 手 (100 shares/lots), so the
+    # per-share VWAP is amount/vol * 10. HK daily is already in per-share units.
+    vwap_factor = 10.0 if daily_dataset in ("fund_daily", "daily") else 1.0
     rows = []
     for record in provider.fetch_records(daily_dataset, symbol, start_date, end_date):
         close = record.get("close")
@@ -45,7 +48,7 @@ def _fetch_symbol_ohlcv(symbol, provider, daily_dataset, start_date, end_date):
             "high": float(record.get("high") or close),
             "low": float(record.get("low") or close),
             "close": close,
-            "vwap": amount / volume if volume > 0 else close,
+            "vwap": amount / volume * vwap_factor if volume > 0 else close,
             "volume": volume,
             "amount": amount,
         })

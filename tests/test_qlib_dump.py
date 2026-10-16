@@ -39,6 +39,17 @@ class BuildOhlcvPanelTests(unittest.TestCase):
             MockProvider.return_value.fetch_records.return_value = fake
             frame = build_ohlcv_panel(["510300.SH"], "2026-01-01", "2026-01-10")
         self.assertEqual(frame.iloc[0]["symbol"], "510300.SH")
+        # amount(千元)/vol(手)*10 = 20000/1000*10 = 200 元/份
+        self.assertAlmostEqual(frame.iloc[0]["vwap"], 200.0)
+
+    def test_build_ohlcv_panel_hk_vwap_has_no_factor(self):
+        fake = [{
+            "trade_date": "20260105", "open": 10, "high": 11, "low": 9,
+            "close": 10.5, "vol": 1000, "amount": 20000,
+        }]
+        with patch("quant_platform.qlib_dump.TushareDatasetProvider") as MockProvider:
+            MockProvider.return_value.fetch_records.return_value = fake
+            frame = build_ohlcv_panel(["00700.HK"], "2026-01-01", "2026-01-10", asset_class="hk")
         self.assertAlmostEqual(frame.iloc[0]["vwap"], 20.0)
 
     def test_build_ohlcv_panel_stock_uses_daily_dataset(self):

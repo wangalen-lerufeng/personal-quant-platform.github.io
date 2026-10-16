@@ -216,6 +216,25 @@ class BuildEtfPanelTests(unittest.TestCase):
         )
         self.assertNotIn("510500.SH", set(panel["symbol"]))
 
+    def test_panel_forward_return_is_forward_for_descending_input(self):
+        # Tushare returns rows newest-first; build_etf_panel must still produce forward returns.
+        daily = pd.DataFrame({
+            "symbol": ["A", "A", "A"],
+            "trade_date": ["20260103", "20260102", "20260101"],
+            "close": [121.0, 110.0, 100.0],
+            "volume": [1000, 1000, 1000],
+            "amount": [1_000_000, 1_000_000, 1_000_000],
+        })
+        adj = pd.DataFrame({
+            "symbol": ["A", "A", "A"],
+            "trade_date": ["20260103", "20260102", "20260101"],
+            "adj_factor": [1.0, 1.0, 1.0],
+        })
+        basics = [{"ts_code": "A", "list_status": "L"}]
+        panel = build_etf_panel(daily, adj, basics=basics, horizons=(1,))
+        first = panel.iloc[0]  # 20260101, ascending
+        self.assertAlmostEqual(first["forward_return_1d"], 0.10)
+
     def test_panel_feeds_factor_analysis_contract(self):
         daily, adj, basics = self._sample_inputs()
         panel = build_etf_panel(daily, adj, basics=basics, horizons=(1, 5))
