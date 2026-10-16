@@ -32,9 +32,18 @@ class BuildTargetsTests(unittest.TestCase):
         targets = build_targets(
             ["A", "B"],
             _decisions({"A": "pass", "B": "pass"}),
+            adjustment=0.8,
+        )
+        self.assertAlmostEqual(targets[0].weight, 0.4)
+
+    def test_caps_total_weight_at_100_percent(self):
+        targets = build_targets(
+            ["A", "B"],
+            _decisions({"A": "pass", "B": "pass"}),
             adjustment=1.2,
         )
-        self.assertAlmostEqual(targets[0].weight, 0.6)
+        self.assertAlmostEqual(targets[0].weight, 0.5)
+        self.assertAlmostEqual(targets[1].weight, 0.5)
 
     def test_empty_when_no_pass(self):
         self.assertEqual(build_targets(["A"], _decisions({"A": "observe"})), [])

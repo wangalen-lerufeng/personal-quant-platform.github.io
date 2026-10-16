@@ -90,10 +90,11 @@ class Phase9ApiTests(unittest.TestCase):
             )
         session = registry.get(result["account_id"])
         positions = session.matcher.positions
+        # 0.5 weight * 1_000_000 cash / 10 price = 50000 shares
         self.assertIn("510300.SH", positions)
-        self.assertAlmostEqual(positions["510300.SH"], 0.5)
+        self.assertAlmostEqual(positions["510300.SH"], 50000.0)
         self.assertIn("510500.SH", positions)
-        self.assertAlmostEqual(positions["510500.SH"], 0.5)
+        self.assertAlmostEqual(positions["510500.SH"], 50000.0)
 
     def test_phase9_payload_requires_symbols(self):
         registry = PaperSimulationRegistry(SimulationAccountStore(":memory:"))

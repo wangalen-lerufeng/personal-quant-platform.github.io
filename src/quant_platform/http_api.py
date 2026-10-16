@@ -235,13 +235,20 @@ def phase9_payload(payload: dict, control_plane, simulation_registry, config=Non
         TargetPosition(symbol=item["symbol"], weight=item["weight"])
         for item in research["targets"]
     ]
-    plan = plan_orders({}, targets, risk_engine)
+    initial_cash = 1_000_000.0
+    prices = {}
+    for item in research["targets"]:
+        try:
+            prices[item["symbol"]] = _latest_close_for_fill(item["symbol"], asset_class)
+        except Exception:
+            prices[item["symbol"]] = None
+    plan = plan_orders({}, targets, risk_engine, capital=initial_cash, prices=prices)
 
     run_id = f"phase9-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(3)}"
     account_id = run_id
-    session = simulation_registry.create(account_id, initial_cash=1_000_000.0)
+    session = simulation_registry.create(account_id, initial_cash=initial_cash)
     submission = submit_to_simulation(plan, session)
-    _fill_paper_orders(session, plan, asset_class)
+    _fill_paper_orders(session, plan, asset_class, prices=prices)
 
     result = {
         **research,
@@ -285,13 +292,15 @@ def _latest_close_for_fill(symbol: str, asset_class: str):
     return float(close) if close is not None else None
 
 
-def _fill_paper_orders(session, plan, asset_class: str) -> None:
+def _fill_paper_orders(session, plan, asset_class: str, prices: dict[str, float] | None = None) -> None:
     """Mark the submitted paper orders to market at the latest real close."""
     for order in plan.orders:
         try:
-            close = _latest_close_for_fill(order.symbol, asset_class)
+            close = prices.get(order.symbol) if prices else None
+            if not close:
+                close = _latest_close_for_fill(order.symbol, asset_class)
             if close:
-                session.on_market(order.symbol, close, volume=1e9)
+                session.on_market(order.symbol, float(close), volume=1e9)
         except Exception:
             continue
 

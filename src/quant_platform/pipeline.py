@@ -66,7 +66,8 @@ def build_targets(
     ]
     if not passed:
         return []
-    weight = clamp_adjustment(adjustment) / len(passed)
+    # Cap total weight at 100% (no leverage in paper simulation).
+    weight = min(clamp_adjustment(adjustment), 1.0) / len(passed)
     return [TargetPosition(symbol=symbol, weight=weight) for symbol in passed]
 
 
@@ -77,8 +78,15 @@ def plan_orders(
     *,
     strategy_id: str = "phase9-pipeline",
     asset_class: AssetClass = AssetClass.ETF,
+    capital: float | None = None,
+    prices: dict[str, float] | None = None,
 ) -> ExecutionPlan:
-    """Convert target positions into risk-gated order intents with an audit trail."""
+    """Convert target positions into risk-gated order intents with an audit trail.
+
+    ``target.weight`` is a portfolio fraction (percentage of capital). When
+    ``capital`` and ``prices`` are provided, the order quantity is converted to
+    shares (``weight * capital / price``); otherwise it stays in weight units.
+    """
     audit: list[AuditEntry] = [AuditEntry("plan_orders", None, {"target_count": len(targets)})]
     orders: list[OrderIntent] = []
     rejected: list[dict] = []
@@ -88,18 +96,23 @@ def plan_orders(
         if abs(delta) < 1e-12:
             audit.append(AuditEntry("no_delta", target.symbol, {"delta": 0.0}))
             continue
+        quantity = abs(delta)
+        if capital is not None and prices is not None:
+            price = prices.get(target.symbol)
+            if price:
+                quantity = abs(delta) * capital / price
         side = OrderSide.BUY if delta > 0 else OrderSide.SELL
         intent = OrderIntent(
             symbol=target.symbol,
             side=side,
-            quantity=abs(delta),
+            quantity=quantity,
             strategy_id=strategy_id,
             asset_class=asset_class,
         )
         decision = risk_engine.evaluate(intent)
         audit.append(AuditEntry("risk_gate", target.symbol, {
             "side": side.value,
-            "quantity": abs(delta),
+            "quantity": quantity,
             "allowed": decision.allowed,
             "reason": decision.reason,
         }))
@@ -109,7 +122,7 @@ def plan_orders(
             rejected.append({
                 "symbol": target.symbol,
                 "side": side.value,
-                "quantity": abs(delta),
+                "quantity": quantity,
                 "reason": decision.reason,
             })
     return ExecutionPlan(tuple(orders), tuple(rejected), tuple(audit))
