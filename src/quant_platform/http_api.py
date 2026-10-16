@@ -227,6 +227,7 @@ def phase9_payload(payload: dict, control_plane, simulation_registry, config=Non
         ]
 
     compute_factor_ic = bool(payload.get("factor_ic", True))
+    keyword = str(payload.get("keyword", "")).strip() or None
     research = run_phase9_alpha158(
         symbols, start_date, end_date, top_k=top_k, asset_class=asset_class,
         feature_expressions=feature_expressions or None,
@@ -266,6 +267,7 @@ def phase9_payload(payload: dict, control_plane, simulation_registry, config=Non
     _record_phase9_run(
         symbols, top_k, asset_class, index_code, result, run_id=run_id,
         feature_expressions=feature_expressions, start_date=start_date, end_date=end_date,
+        keyword=keyword,
     )
     _persist_last_phase9(research, asset_class, index_code, run_id, account_id)
     _save_last_phase9_result(result)
@@ -310,6 +312,7 @@ def _fill_paper_orders(session, plan, asset_class: str, prices: dict[str, float]
 def _record_phase9_run(
     symbols, top_k, asset_class, index_code, result,
     run_history=None, run_id=None, feature_expressions=None, start_date=None, end_date=None,
+    keyword=None,
 ) -> str:
     store = run_history or get_store()
     record = {
@@ -319,6 +322,7 @@ def _record_phase9_run(
         "top_k": top_k,
         "symbols": list(symbols),
         "feature_expressions": list(feature_expressions) if feature_expressions else [],
+        "keyword": keyword,
         "start_date": start_date,
         "end_date": end_date,
         "candidates": result.get("candidates", []),
@@ -607,6 +611,67 @@ def simulation_account_report_payload(payload: dict, registry: PaperSimulationRe
     if not account_id:
         raise ValueError("account_id is required")
     return build_account_report(registry.get(account_id))
+
+
+def simulation_track_rebalance_payload(payload: dict, registry: PaperSimulationRegistry) -> dict:
+    """Mark the account to market with real closes and rebalance to target weights."""
+    account_id = str(payload.get("account_id", "")).strip()
+    if not account_id:
+        raise ValueError("account_id is required")
+    session = registry.get(account_id)
+
+    record = get_store().get(account_id)
+    if record is None or record.get("kind") != "phase9":
+        raise ValueError(f"未找到账户 {account_id} 对应的组合研究目标仓位")
+    targets = record.get("targets", [])
+    if not targets:
+        raise ValueError("该组合研究没有目标仓位，无法调仓")
+    asset_class = record.get("asset_class", "stock")
+
+    prices: dict[str, float] = {}
+    for item in targets:
+        symbol = item["symbol"]
+        try:
+            prices[symbol] = _latest_close_for_fill(symbol, asset_class)
+        except Exception:
+            prices[symbol] = None
+
+    for symbol, close in prices.items():
+        if close:
+            session.on_market(symbol, float(close), volume=1e9)
+
+    equity = session.matcher.cash + sum(
+        q * session.latest_prices.get(s, 0.0) for s, q in session.matcher.positions.items()
+    )
+    current_weights = {
+        s: q * session.latest_prices.get(s, 0.0) / equity
+        for s, q in session.matcher.positions.items()
+        if equity > 0 and session.latest_prices.get(s)
+    }
+
+    target_positions = [
+        TargetPosition(symbol=item["symbol"], weight=float(item["weight"])) for item in targets
+    ]
+    plan = plan_orders(
+        current_weights, target_positions, RiskEngine(RiskLimits()),
+        capital=equity, prices=prices,
+    )
+    submit_to_simulation(plan, session)
+    _fill_paper_orders(session, plan, asset_class, prices=prices)
+
+    new_equity = session.matcher.cash + sum(
+        q * session.latest_prices.get(s, 0.0) for s, q in session.matcher.positions.items()
+    )
+    return {
+        "account_id": account_id,
+        "equity": new_equity,
+        "trades": [{"symbol": o.symbol, "side": o.side.value, "quantity": o.quantity} for o in plan.orders],
+        "rebalanced": len(plan.orders),
+        "current_weights": {s: round(w, 4) for s, w in current_weights.items()},
+        "target_weights": {item["symbol"]: item["weight"] for item in targets},
+        "paper_only": True,
+        "execution_enabled": False,
+    }
 
 
 def simulation_reconciliation_payload(
@@ -1060,6 +1125,7 @@ _JSON_POST_ROUTES = {
     "/simulation/order", "/simulation/market", "/simulation/control",
     "/simulation/reconciliation", "/simulation/acceptance", "/backtest",
     "/simulation/portfolio-report", "/simulation/delete", "/simulation/account-report",
+    "/simulation/track-rebalance",
     "/phase9/run", "/factor/symbol", "/run-history/delete",
     "/validation/forward",
 }
@@ -1292,6 +1358,7 @@ def make_handler(
                 "/simulation/acceptance": simulation_acceptance_payload,
                 "/simulation/delete": simulation_delete_payload,
                 "/simulation/account-report": simulation_account_report_payload,
+                "/simulation/track-rebalance": simulation_track_rebalance_payload,
             }
             if route in simulation_routes:
                 try:
