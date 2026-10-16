@@ -19,11 +19,15 @@ def compute_factor_ic_report(
     qlib_dir: str,
     feature_expressions=None,
     top_n: int = 20,
+    min_ic: float = 0.02,
+    min_icir: float = 0.15,
 ) -> dict:
     """Return per-factor Rank IC + ICIR for the factor set used by the pipeline.
 
     For custom ``feature_expressions`` it reports exactly those factors; otherwise
-    it reports the top-N of Alpha158's ~158 factors by absolute Rank IC.
+    it reports the top-N of Alpha158's ~158 factors by absolute Rank IC. Each factor
+    is also tagged ``keep``/``drop`` by the ``min_ic``/``min_icir`` thresholds so the
+    console can suggest a trimmed factor list for iterative optimisation.
     """
     import numpy as np
     from qlib.data import D
@@ -40,7 +44,11 @@ def compute_factor_ic_report(
 
         expressions, names = Alpha158DL.get_feature_config()
     if not expressions:
-        return {"factors": [], "total": 0, "research_only": True, "execution_enabled": False}
+        return {
+            "factors": [], "total": 0, "kept": 0, "recommended": [],
+            "min_ic": min_ic, "min_icir": min_icir,
+            "research_only": True, "execution_enabled": False,
+        }
 
     frame = D.features(
         list(symbols), expressions + [FORWARD_RETURN_EXPR],
@@ -61,18 +69,30 @@ def compute_factor_ic_report(
         daily_ics = np.asarray(daily_ics, dtype=float)
         mean_ic = float(daily_ics.mean())
         ic_std = float(daily_ics.std(ddof=1)) if len(daily_ics) > 1 else 0.0
+        icir = round(mean_ic / ic_std, 4) if ic_std > 0 else None
+        verdict = (
+            "keep"
+            if abs(mean_ic) >= min_ic and icir is not None and abs(icir) >= min_icir
+            else "drop"
+        )
         report.append({
             "name": names[index],
             "expression": expr,
             "rank_ic": round(mean_ic, 4),
-            "icir": round(mean_ic / ic_std, 4) if ic_std > 0 else None,
+            "icir": icir,
             "days": int(len(daily_ics)),
+            "verdict": verdict,
         })
 
     report.sort(key=lambda item: abs(item["rank_ic"]), reverse=True)
+    recommended = [item["expression"] for item in report if item["verdict"] == "keep"]
     return {
         "factors": report[: max(1, int(top_n))],
         "total": len(report),
+        "kept": len(recommended),
+        "recommended": recommended,
+        "min_ic": min_ic,
+        "min_icir": min_icir,
         "research_only": True,
         "execution_enabled": False,
     }

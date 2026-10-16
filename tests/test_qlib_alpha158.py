@@ -71,10 +71,14 @@ class FactorICReportTests(unittest.TestCase):
         self.assertEqual(report["total"], 2)
         self.assertTrue(report["factors"])
         self.assertFalse(report["execution_enabled"])
+        self.assertIn("recommended", report)
+        self.assertIn("kept", report)
         for factor in report["factors"]:
             self.assertIn("rank_ic", factor)
             self.assertIn("icir", factor)
             self.assertIn("days", factor)
+            self.assertIn("verdict", factor)
+            self.assertIn(factor["verdict"], ("keep", "drop"))
 
 
 class SingleSymbolFactorTests(unittest.TestCase):
