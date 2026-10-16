@@ -143,8 +143,13 @@ class SimulationAccountStore:
     def save_snapshot(self, account_id: str, cash: float, equity: float, positions: dict[str, float]) -> int:
         if not account_id.strip():
             raise ValueError("account_id is required")
-        if cash < 0 or equity < 0:
+        cash = float(cash)
+        equity = float(equity)
+        # 容忍浮点运算产生的极小负值（如 -1e-13），但仍拒绝真实负值
+        if cash < -1e-6 or equity < -1e-6:
             raise ValueError("cash and equity must be non-negative")
+        cash = max(cash, 0.0)
+        equity = max(equity, 0.0)
         cursor = self.connection.execute(
             "INSERT INTO simulation_account_snapshots(account_id, cash, equity, positions_json, created_at) VALUES (?, ?, ?, ?, ?)",
             (account_id, cash, equity, json.dumps(positions, ensure_ascii=False, sort_keys=True), datetime.now(timezone.utc).isoformat()),

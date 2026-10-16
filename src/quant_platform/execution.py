@@ -117,6 +117,9 @@ class PaperMatchingEngine:
             if quantity <= 0:
                 continue
             notional = quantity * fill_price
+            if side.value == "buy":
+                # 避免浮点误差使 notional 略高于 cash，导致现金出现极小负值
+                notional = min(notional, self.cash)
             signed_quantity = quantity if side.value == "buy" else -quantity
             self.cash += -notional if side.value == "buy" else notional
             self.positions[symbol] = self.positions.get(symbol, 0.0) + signed_quantity
