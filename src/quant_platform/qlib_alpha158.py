@@ -11,6 +11,73 @@ DEFAULT_LABEL = (["Ref($close, -1)/$close - 1"], ["LABEL0"])
 FORWARD_RETURN_EXPR = "Ref($close, -1)/$close - 1"
 
 
+def compute_factor_ic_report(
+    symbols,
+    start_date,
+    end_date,
+    *,
+    qlib_dir: str,
+    feature_expressions=None,
+    top_n: int = 20,
+) -> dict:
+    """Return per-factor Rank IC + ICIR for the factor set used by the pipeline.
+
+    For custom ``feature_expressions`` it reports exactly those factors; otherwise
+    it reports the top-N of Alpha158's ~158 factors by absolute Rank IC.
+    """
+    import numpy as np
+    from qlib.data import D
+
+    from .qlib_dump import init_qlib
+
+    init_qlib(qlib_dir)
+
+    if feature_expressions:
+        expressions = [str(e).strip() for e in feature_expressions if str(e).strip()]
+        names = [f"F{i}" for i in range(len(expressions))]
+    else:
+        from qlib.contrib.data.loader import Alpha158DL
+
+        expressions, names = Alpha158DL.get_feature_config()
+    if not expressions:
+        return {"factors": [], "total": 0, "research_only": True, "execution_enabled": False}
+
+    frame = D.features(
+        list(symbols), expressions + [FORWARD_RETURN_EXPR],
+        start_time=start_date, end_time=end_date,
+    ).dropna(subset=[FORWARD_RETURN_EXPR])
+
+    report = []
+    for index, expr in enumerate(expressions):
+        daily_ics = []
+        for _, section in frame.groupby(level="datetime"):
+            if len(section) < 3:
+                continue
+            ic = section[expr].corr(section[FORWARD_RETURN_EXPR], method="spearman")
+            if ic is not None and not (isinstance(ic, float) and np.isnan(ic)):
+                daily_ics.append(ic)
+        if not daily_ics:
+            continue
+        daily_ics = np.asarray(daily_ics, dtype=float)
+        mean_ic = float(daily_ics.mean())
+        ic_std = float(daily_ics.std(ddof=1)) if len(daily_ics) > 1 else 0.0
+        report.append({
+            "name": names[index],
+            "expression": expr,
+            "rank_ic": round(mean_ic, 4),
+            "icir": round(mean_ic / ic_std, 4) if ic_std > 0 else None,
+            "days": int(len(daily_ics)),
+        })
+
+    report.sort(key=lambda item: abs(item["rank_ic"]), reverse=True)
+    return {
+        "factors": report[: max(1, int(top_n))],
+        "total": len(report),
+        "research_only": True,
+        "execution_enabled": False,
+    }
+
+
 def analyze_single_symbol_factors(
     symbol,
     factor_expressions,

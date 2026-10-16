@@ -6,7 +6,7 @@ from unittest.mock import patch
 import numpy as np
 import pandas as pd
 
-from quant_platform.qlib_alpha158 import analyze_single_symbol_factors, run_alpha158
+from quant_platform.qlib_alpha158 import analyze_single_symbol_factors, compute_factor_ic_report, run_alpha158
 from quant_platform.qlib_dump import dump_etf_to_qlib
 
 SYMBOLS = ["510300.SH", "510500.SH", "159919.SZ", "512880.SH", "515790.SH"]
@@ -57,6 +57,24 @@ class Alpha158Tests(unittest.TestCase):
             )
         self.assertFalse(result["scores"].empty)
         self.assertTrue(result["candidates"])
+
+
+class FactorICReportTests(unittest.TestCase):
+    def test_compute_factor_ic_report(self):
+        frame = _synthetic_frame(SYMBOLS, n_days=100)
+        with tempfile.TemporaryDirectory() as tmp:
+            qlib_dir = dump_etf_to_qlib(frame, Path(tmp) / "qlib_data")
+            report = compute_factor_ic_report(
+                SYMBOLS, "2024-01-01", "2024-10-01", qlib_dir=qlib_dir,
+                feature_expressions=["Ref($close,1)/$close-1", "Mean($close,20)/$close"],
+            )
+        self.assertEqual(report["total"], 2)
+        self.assertTrue(report["factors"])
+        self.assertFalse(report["execution_enabled"])
+        for factor in report["factors"]:
+            self.assertIn("rank_ic", factor)
+            self.assertIn("icir", factor)
+            self.assertIn("days", factor)
 
 
 class SingleSymbolFactorTests(unittest.TestCase):

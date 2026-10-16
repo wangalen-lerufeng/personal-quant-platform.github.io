@@ -21,7 +21,7 @@ from .pipeline import build_targets
 from .position_sizing import SizingCosts, build_states
 from .ppo_policy import train_ppo
 from .providers import TushareDatasetProvider
-from .qlib_alpha158 import run_alpha158
+from .qlib_alpha158 import compute_factor_ic_report, run_alpha158
 from .qlib_dump import build_ohlcv_panel, dump_etf_to_qlib
 from .qlib_model import evaluate_scores, run_qlib_baseline, run_qlib_ensemble
 from .report_charts import compute_report_charts
@@ -279,11 +279,16 @@ def run_phase9_alpha158(
         baseline["scores"], panel, baseline["candidates"],
         label_column="forward_return_1d",
     )
+    factor_ic = compute_factor_ic_report(
+        symbols, start_date, end_date, qlib_dir=qlib_dir,
+        feature_expressions=feature_expressions,
+    )
     return {
         "panel": _panel_summary(panel),
         "baseline": {"rank_ic": baseline_eval["rank_ic"], "icir": baseline_eval["icir"]},
         "ensemble": {"rank_ic": ensemble_eval["rank_ic"], "icir": ensemble_eval["icir"]},
         "charts": charts,
+        "factor_ic": factor_ic,
         **final,
         "research_only": True,
         "execution_enabled": False,
