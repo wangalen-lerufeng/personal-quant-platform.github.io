@@ -251,6 +251,45 @@ def _model_gate(baseline_eval: dict, *, min_ic: float = 0.0, min_icir: float = 0
     return {"passed": True, "reason": ""}
 
 
+def _build_neutralization_data(symbols, start_date, end_date):
+    """拉取 A 股行业分类与总市值，用于行业/市值中性化（股票资产）。
+
+    返回 ``(industry_map, log_mv)``；``log_mv`` 以 (instrument, datetime) 为索引。
+    任一步失败则返回 ``(None, None)``，由调用方降级为不做中性化。
+    """
+    provider = TushareDatasetProvider("TUSHARE_TOKEN")
+
+    industry_map = {}
+    try:
+        for row in provider.fetch_all_stocks():
+            code = str(row.get("ts_code") or "").strip()
+            if code:
+                industry_map[code] = str(row.get("industry") or "").strip() or "unknown"
+    except Exception:
+        industry_map = {}
+
+    records = []
+    for symbol in symbols:
+        try:
+            for row in provider.fetch_records("daily_basic", symbol, start_date, end_date):
+                mv = row.get("total_mv")
+                if mv is None:
+                    continue
+                records.append({
+                    "symbol": symbol,
+                    "datetime": pd.Timestamp(str(row.get("trade_date", "")).replace("-", "")[:8]),
+                    "log_mv": float(np.log(max(float(mv), 1.0))),
+                })
+        except Exception:
+            continue
+
+    if not records:
+        return industry_map or None, None
+
+    frame = pd.DataFrame(records).set_index(["symbol", "datetime"])["log_mv"]
+    return industry_map or None, frame
+
+
 def run_phase9_alpha158(
     symbols,
     start_date,
@@ -273,15 +312,25 @@ def run_phase9_alpha158(
     qlib_dir = str(Path(qlib_dir).expanduser())
     dump_etf_to_qlib(ohlcv, qlib_dir)
 
+    # 行业/市值中性化数据（仅股票资产，失败则降级为不做中性化）
+    industry_map, log_mv = None, None
+    if asset_class == "stock":
+        try:
+            industry_map, log_mv = _build_neutralization_data(symbols, start_date, end_date)
+        except Exception:
+            industry_map, log_mv = None, None
+
     baseline = run_alpha158(
         symbols, start_date, end_date, qlib_dir=qlib_dir, top_k=top_k,
         num_boost_round=100, num_leaves=31, learning_rate=0.05,
         feature_expressions=feature_expressions,
+        industry_map=industry_map, log_mv=log_mv,
     )
     ensemble = run_alpha158(
         symbols, start_date, end_date, qlib_dir=qlib_dir, top_k=top_k,
         model_type="ensemble", num_models=5, num_boost_round=50, num_leaves=31, learning_rate=0.05,
         feature_expressions=feature_expressions,
+        industry_map=industry_map, log_mv=log_mv,
     )
 
     panel = build_tushare_etf_panel(symbols, start_date, end_date, asset_class=asset_class)

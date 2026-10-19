@@ -48,6 +48,45 @@ def cross_sectional_zscore(frame: pd.DataFrame, factors) -> pd.DataFrame:
     return result
 
 
+def neutralize(
+    frame: pd.DataFrame,
+    factors,
+    industry_map: dict,
+    log_mv: pd.Series,
+) -> pd.DataFrame:
+    """行业 + 市值中性化：每日横截面回归取残差。
+
+    回归目标：``因子值 = 截距 + 行业哑变量 + log(总市值) + 残差``，用残差替代因子，
+    避免把行业暴露或小市值暴露误认为 Alpha。
+
+    ``log_mv`` 需要以 ``(instrument, datetime)`` 为索引。
+    """
+    result = frame.copy()
+    instruments = result.index.get_level_values("instrument")
+    result["_industry"] = [industry_map.get(i, "unknown") for i in instruments]
+    result["_log_mv"] = log_mv.reindex(result.index).astype(float)
+
+    for f in factors:
+        resid = pd.Series(np.nan, index=result.index, dtype=float)
+        for date, group in result.groupby(level="datetime"):
+            y = group[f].to_numpy(dtype=float)
+            dummies = pd.get_dummies(group["_industry"], drop_first=True).to_numpy(dtype=float)
+            X = np.column_stack([
+                np.ones(len(group)),
+                dummies,
+                group["_log_mv"].to_numpy(dtype=float),
+            ])
+            mask = ~np.isnan(y) & ~np.isnan(X).any(axis=1)
+            if mask.sum() > X.shape[1]:
+                beta, *_ = np.linalg.lstsq(X[mask], y[mask], rcond=None)
+                r = y - X @ beta
+                r[~mask] = np.nan
+                resid.loc[group.index] = r
+        result[f] = resid
+
+    return result.drop(columns=["_industry", "_log_mv"])
+
+
 def preprocess_factor_panel(
     frame: pd.DataFrame,
     factors,
@@ -55,11 +94,15 @@ def preprocess_factor_panel(
     winsorize: bool = True,
     standardize: bool = True,
     n_sigma: float = 3.0,
+    industry_map: dict | None = None,
+    log_mv: pd.Series | None = None,
 ) -> pd.DataFrame:
-    """预处理因子面板：MAD 去极值 + 截面标准化。"""
+    """预处理因子面板：MAD 去极值 → 行业市值中性化 → 截面标准化。"""
     result = frame
     if winsorize:
         result = winsorize_mad(result, factors, n_sigma=n_sigma)
+    if industry_map is not None and log_mv is not None:
+        result = neutralize(result, factors, industry_map, log_mv)
     if standardize:
         result = cross_sectional_zscore(result, factors)
     return result

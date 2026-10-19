@@ -263,12 +263,14 @@ def run_alpha158(
     num_models: int = 5,
     feature_expressions=None,
     preprocess: bool = True,
+    industry_map: dict | None = None,
+    log_mv=None,
     **model_kwargs,
 ) -> dict:
     """Train a Qlib model on Alpha158 (or custom) factors and return scores + candidates.
 
-    原始因子经 ``D.features`` 计算后，先过一遍因子预处理（MAD 去极值 + 截面标准化），
-    再喂给 LightGBM/DoubleEnsemble。
+    原始因子经 ``D.features`` 计算后，先过一遍因子预处理（MAD 去极值 + 行业市值中性化
+    + 截面标准化），再喂给 LightGBM/DoubleEnsemble。
     """
     from qlib.contrib.model.double_ensemble import DEnsembleModel
     from qlib.contrib.model.gbdt import LGBModel
@@ -299,7 +301,10 @@ def run_alpha158(
     ).dropna(subset=[FORWARD_RETURN_EXPR])
 
     if preprocess:
-        frame = preprocess_factor_panel(frame, expressions)
+        frame = preprocess_factor_panel(
+            frame, expressions,
+            industry_map=industry_map, log_mv=log_mv,
+        )
 
     dataset = _build_dataset(frame, expressions, start, train_end, valid_end, end)
 

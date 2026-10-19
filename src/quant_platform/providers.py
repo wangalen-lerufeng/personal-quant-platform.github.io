@@ -412,9 +412,9 @@ class TushareDatasetProvider:
         )
 
     def fetch_all_stocks(self) -> list[dict]:
-        """Return all listed A-share stocks (ts_code + name) from stock_basic."""
+        """Return all listed A-share stocks (ts_code + name + industry) from stock_basic."""
         client = _create_tushare_client(self.token_env)
-        frame = client.stock_basic(list_status="L", fields="ts_code,name")
+        frame = client.stock_basic(list_status="L", fields="ts_code,name,industry")
         if frame is None or frame.empty:
             return []
         import json

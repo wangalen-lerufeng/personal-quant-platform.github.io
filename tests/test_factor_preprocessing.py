@@ -6,6 +6,7 @@ import pandas as pd
 from quant_platform.factor_preprocessing import (
     cross_sectional_zscore,
     missing_report,
+    neutralize,
     preprocess_factor_panel,
     winsorize_mad,
 )
@@ -50,6 +51,21 @@ class MissingReportTests(unittest.TestCase):
         report = missing_report(frame, ["f1", "f2"])
         self.assertAlmostEqual(report["factor_missing_ratio"]["f1"], 0.25)
         self.assertAlmostEqual(report["factor_missing_ratio"]["f2"], 0.0)
+
+
+class NeutralizeTests(unittest.TestCase):
+    def test_removes_market_cap_exposure(self):
+        index = pd.MultiIndex.from_tuples(
+            [("A", "20240102"), ("B", "20240102"), ("C", "20240102"), ("D", "20240102")],
+            names=["instrument", "datetime"],
+        )
+        log_mv = pd.Series([1.0, 2.0, 3.0, 4.0], index=index)
+        industry_map = {"A": "银行", "B": "银行", "C": "科技", "D": "科技"}
+        # f1 完全等于 10 * log_mv，中性化后应被完全剔除
+        frame = pd.DataFrame({"f1": 10.0 * log_mv.values}, index=index)
+
+        result = neutralize(frame, ["f1"], industry_map, log_mv)
+        self.assertAlmostEqual(float(np.abs(result["f1"]).max()), 0.0, places=6)
 
 
 if __name__ == "__main__":
