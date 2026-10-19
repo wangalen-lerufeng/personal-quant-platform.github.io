@@ -5,118 +5,11 @@ or a custom ``DataHandlerLP`` with user-supplied expression factors. The data
 must already be dumped to Qlib's ``.bin`` format via ``qlib_dump``.
 """
 
+import numpy as np
 import pandas as pd
 
 DEFAULT_LABEL = (["Ref($close, -1)/$close - 1"], ["LABEL0"])
 FORWARD_RETURN_EXPR = "Ref($close, -1)/$close - 1"
-
-
-def compute_factor_ic_report(
-    symbols,
-    start_date,
-    end_date,
-    *,
-    qlib_dir: str,
-    feature_expressions=None,
-    top_n: int = 20,
-    min_ic: float = 0.02,
-    min_icir: float = 0.15,
-    train_end=None,
-    corr_threshold: float = 0.9,
-) -> dict:
-    """Return per-factor Rank IC + ICIR for the factor set used by the pipeline.
-
-    For custom ``feature_expressions`` it reports exactly those factors; otherwise
-    it reports the top-N of Alpha158's ~158 factors by absolute Rank IC. Each factor
-    is also tagged ``keep``/``drop`` by the ``min_ic``/``min_icir`` thresholds so the
-    console can suggest a trimmed factor list for iterative optimisation.
-
-    When ``train_end`` is given, IC/ICIR are computed only over the training period
-    ``[start_date, train_end]`` so factor selection does not peek into the test period.
-    """
-    import numpy as np
-    from qlib.data import D
-
-    from .qlib_dump import init_qlib
-
-    init_qlib(qlib_dir)
-
-    if feature_expressions:
-        expressions = [str(e).strip() for e in feature_expressions if str(e).strip()]
-        names = [f"F{i}" for i in range(len(expressions))]
-    else:
-        from qlib.contrib.data.loader import Alpha158DL
-
-        expressions, names = Alpha158DL.get_feature_config()
-    if not expressions:
-        return {
-            "factors": [], "total": 0, "kept": 0, "recommended": [],
-            "min_ic": min_ic, "min_icir": min_icir, "train_end": train_end,
-            "research_only": True, "execution_enabled": False,
-        }
-
-    ic_end = train_end or end_date
-    frame = D.features(
-        list(symbols), expressions + [FORWARD_RETURN_EXPR],
-        start_time=start_date, end_time=ic_end,
-    ).dropna(subset=[FORWARD_RETURN_EXPR])
-
-    report = []
-    for index, expr in enumerate(expressions):
-        daily_ics = []
-        for _, section in frame.groupby(level="datetime"):
-            if len(section) < 3:
-                continue
-            ic = section[expr].corr(section[FORWARD_RETURN_EXPR], method="spearman")
-            if ic is not None and not (isinstance(ic, float) and np.isnan(ic)):
-                daily_ics.append(ic)
-        if not daily_ics:
-            continue
-        daily_ics = np.asarray(daily_ics, dtype=float)
-        mean_ic = float(daily_ics.mean())
-        ic_std = float(daily_ics.std(ddof=1)) if len(daily_ics) > 1 else 0.0
-        icir = round(mean_ic / ic_std, 4) if ic_std > 0 else None
-        verdict = (
-            "keep"
-            if abs(mean_ic) >= min_ic and icir is not None and abs(icir) >= min_icir
-            else "drop"
-        )
-        report.append({
-            "name": names[index],
-            "expression": expr,
-            "rank_ic": round(mean_ic, 4),
-            "icir": icir,
-            "days": int(len(daily_ics)),
-            "verdict": verdict,
-        })
-
-    report.sort(key=lambda item: abs(item["rank_ic"]), reverse=True)
-    top_report = report[: max(1, int(top_n))]
-
-    # 相关性聚类：在 Top-N 因子内，与已保留因子 |corr| >= 阈值的标记为冗余（剔除）
-    if len(top_report) >= 2:
-        exprs = [item["expression"] for item in top_report]
-        corr = frame[exprs].corr()
-        kept_indices = []
-        for i, item in enumerate(top_report):
-            if any(abs(corr.iloc[i, j]) >= corr_threshold for j in kept_indices):
-                item["verdict"] = "drop"
-                item["redundant"] = True
-            else:
-                kept_indices.append(i)
-
-    recommended = [item["expression"] for item in report if item["verdict"] == "keep"]
-    return {
-        "factors": top_report,
-        "total": len(report),
-        "kept": len(recommended),
-        "recommended": recommended,
-        "min_ic": min_ic,
-        "min_icir": min_icir,
-        "train_end": train_end,
-        "research_only": True,
-        "execution_enabled": False,
-    }
 
 
 def analyze_single_symbol_factors(
@@ -230,8 +123,12 @@ class _PrecomputedDataset:
         return frame[col_set]
 
 
-def _build_dataset(frame, expressions, start, train_end, valid_end, end):
-    """将 D.features 的结果切成 train/valid/test 并包装成 Qlib Dataset。"""
+def _build_dataset(frame, start, train_end, valid_start, valid_end, test_start, test_end):
+    """将 D.features 的结果切成 train/valid/test 并包装成 Qlib Dataset。
+
+    各段边界显式传入，便于在 train/valid/test 之间加入 purge/embargo 隔离区：
+    train=[start, train_end)、valid=[valid_start, valid_end)、test=[test_start, test_end)。
+    """
     frame = frame.copy()
     if "datetime" in frame.index.names and frame.index.names[0] != "datetime":
         frame = frame.reorder_levels(["datetime", "instrument"]).sort_index()
@@ -247,9 +144,71 @@ def _build_dataset(frame, expressions, start, train_end, valid_end, end):
 
     return _PrecomputedDataset({
         "train": seg(start, train_end),
-        "valid": seg(train_end, valid_end),
-        "test": seg(valid_end, end),
+        "valid": seg(valid_start, valid_end),
+        "test": seg(test_start, test_end),
     })
+
+
+def _model_instance(model_type, num_models, seed, model_kwargs):
+    from qlib.contrib.model.double_ensemble import DEnsembleModel
+    from qlib.contrib.model.gbdt import LGBModel
+
+    if model_type == "ensemble":
+        kwargs = dict(model_kwargs)
+        kwargs.setdefault("decay", 0.5)
+        return DEnsembleModel(num_models=num_models, seed=seed, **kwargs)
+    return LGBModel(seed=seed, **model_kwargs)
+
+
+def _predict_scores(model, dataset):
+    prediction = model.predict(dataset, segment="test")
+    scores = prediction.rename("score").reset_index()
+    scores.columns = ["timestamp", "symbol", "score"]
+    return scores
+
+
+def _segment_boundaries(frame, start, end, purge, embargo, walk_forward, n_walk_folds):
+    """Return segment boundaries with purge/embargo between train/valid/test.
+
+    Each fold is ``(train_end, valid_start, valid_end, test_start, test_end)`` (all
+    trading-day timestamps). ``purge`` drops the last ``purge`` trading days of each
+    segment whose labels would cross the boundary; ``embargo`` inserts ``embargo``
+    trading days after each boundary before the next segment starts.
+    """
+    dates = pd.Index(frame.index.get_level_values("datetime")).unique().sort_values()
+    n = len(dates)
+    train_end_i = max(1, int(n * 0.7))
+    valid_end_i = max(2, int(n * 0.85))
+
+    def shift(idx, delta):
+        return dates[min(n - 1, max(0, idx + delta))]
+
+    if not walk_forward:
+        return [(
+            shift(train_end_i, -purge),
+            shift(train_end_i, embargo),
+            shift(valid_end_i, -purge),
+            shift(valid_end_i, embargo),
+            end,
+        )]
+
+    folds = []
+    chunks = np.array_split(np.arange(train_end_i, n), n_walk_folds)
+    for chunk in chunks:
+        if len(chunk) == 0:
+            continue
+        test_start_i = int(chunk[0])
+        test_end = dates[min(n - 1, int(chunk[-1]))] + pd.Timedelta(days=1)
+        valid_span = max(1, int(test_start_i * 0.15))
+        fold_train_end_i = max(1, test_start_i - valid_span)
+        folds.append((
+            shift(fold_train_end_i, -purge),
+            shift(fold_train_end_i, embargo),
+            shift(test_start_i, -purge),
+            shift(test_start_i, embargo),
+            test_end,
+        ))
+    return folds
 
 
 def run_alpha158(
@@ -265,26 +224,35 @@ def run_alpha158(
     preprocess: bool = True,
     industry_map: dict | None = None,
     log_mv=None,
+    n_seeds: int = 1,
+    seed: int = 42,
+    walk_forward: bool = False,
+    n_walk_folds: int = 3,
+    select_factors: bool = True,
+    min_ic: float = 0.0,
+    min_icir: float = 0.0,
+    corr_threshold: float = 0.9,
+    purge: int = 1,
+    embargo: int = 1,
     **model_kwargs,
 ) -> dict:
     """Train a Qlib model on Alpha158 (or custom) factors and return scores + candidates.
 
     原始因子经 ``D.features`` 计算后，先过一遍因子预处理（MAD 去极值 + 行业市值中性化
-    + 截面标准化），再喂给 LightGBM/DoubleEnsemble。
+    + 截面标准化），再用训练期数据做因子筛选（IC 阈值 + 相关性聚类），仅保留因子进入
+    LightGBM/DoubleEnsemble。``n_seeds > 1`` 时多种子取平均分数（``seed_scores`` 保留
+    各种子分数）；``walk_forward=True`` 时用扩展窗口滚动训练；``purge``/``embargo`` 在
+    train/valid/test 之间加入标签隔离区，防止跨界泄漏。
     """
-    from qlib.contrib.model.double_ensemble import DEnsembleModel
-    from qlib.contrib.model.gbdt import LGBModel
     from qlib.data import D
 
     from .factor_preprocessing import preprocess_factor_panel
+    from .factor_selection import select_factors as _select_factors
     from .qlib_dump import init_qlib
 
     init_qlib(qlib_dir)
     start = pd.Timestamp(start_date)
     end = pd.Timestamp(end_date)
-    total_days = int((end - start).days)
-    train_end = start + pd.Timedelta(days=int(total_days * 0.7))
-    valid_end = start + pd.Timedelta(days=int(total_days * 0.85))
 
     if feature_expressions:
         expressions = [str(e).strip() for e in feature_expressions if str(e).strip()]
@@ -306,22 +274,63 @@ def run_alpha158(
             industry_map=industry_map, log_mv=log_mv,
         )
 
-    dataset = _build_dataset(frame, expressions, start, train_end, valid_end, end)
+    # 因子筛选必须发生在模型训练之前，且只读取训练期数据
+    selection = None
+    train_exprs = expressions
+    if select_factors:
+        train_end = start + pd.Timedelta(days=int((end - start).days * 0.7))
+        selection = _select_factors(
+            frame, expressions, start=start, train_end=train_end,
+            forward_column=FORWARD_RETURN_EXPR,
+            min_ic=min_ic, min_icir=min_icir, corr_threshold=corr_threshold,
+        )
+        train_exprs = selection["selected"]
+        if not train_exprs:
+            raise ValueError("因子筛选后无保留因子")
 
-    if model_type == "ensemble":
-        model_kwargs.setdefault("decay", 0.5)
-        model = DEnsembleModel(num_models=num_models, **model_kwargs)
+    train_frame = frame[[*train_exprs, FORWARD_RETURN_EXPR]]
+
+    folds = _segment_boundaries(
+        frame, start, end, purge, embargo, walk_forward, n_walk_folds
+    )
+
+    fold_scores = []
+    for fold_train_end, valid_start, valid_end, test_start, test_end in folds:
+        dataset = _build_dataset(
+            train_frame, start, fold_train_end, valid_start, valid_end, test_start, test_end
+        )
+        seed_scores = []
+        for seed_offset in range(n_seeds):
+            trial_seed = seed + seed_offset
+            model = _model_instance(model_type, num_models, trial_seed, model_kwargs)
+            state = np.random.get_state()
+            np.random.seed(trial_seed)
+            try:
+                model.fit(dataset)
+            finally:
+                np.random.set_state(state)
+            seed_scores.append(_predict_scores(model, dataset))
+        fold_scores.append(seed_scores)
+
+    seed_score_frames = [
+        pd.concat([fold[seed_i] for fold in fold_scores], ignore_index=True)
+        for seed_i in range(n_seeds)
+    ]
+
+    if n_seeds > 1:
+        combined = pd.concat(seed_score_frames, ignore_index=True)
+        scores = combined.groupby(["timestamp", "symbol"], as_index=False)["score"].mean()
     else:
-        model = LGBModel(**model_kwargs)
-
-    model.fit(dataset)
-    prediction = model.predict(dataset, segment="test")
-    scores = prediction.rename("score").reset_index()
-    scores.columns = ["timestamp", "symbol", "score"]
+        scores = seed_score_frames[0]
 
     candidates = {}
     for timestamp, section in scores.groupby("timestamp"):
         top = section.sort_values("score", ascending=False)["symbol"].head(top_k)
         candidates[pd.Timestamp(timestamp).isoformat()] = [str(symbol) for symbol in top]
 
-    return {"scores": scores, "candidates": candidates}
+    return {
+        "scores": scores,
+        "candidates": candidates,
+        "seed_scores": seed_score_frames,
+        "factor_selection": selection,
+    }

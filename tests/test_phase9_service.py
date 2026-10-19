@@ -82,19 +82,43 @@ class RunPhase9Tests(unittest.TestCase):
             run_phase9(single)
 
 
+def _gate_eval(rank_ic=0.04, icir=0.3, positive_ratio=0.6):
+    return {"rank_ic": rank_ic, "icir": icir, "positive_ratio": positive_ratio}
+
+
+def _monotonic_group():
+    return {"monotonic": True, "direction": "ascending", "monotonicity_score": 1.0}
+
+
 class ModelGateTests(unittest.TestCase):
-    def test_gate_passes_for_positive_ic(self):
-        gate = _model_gate({"rank_ic": 0.04, "icir": 0.3})
+    def test_gate_passes_for_healthy_model(self):
+        gate = _model_gate(_gate_eval(), group_returns=_monotonic_group(), net_return_after_cost=0.02)
         self.assertTrue(gate["passed"])
+        self.assertTrue(all(rule["passed"] for rule in gate["rules"]))
 
     def test_gate_rejects_non_positive_ic(self):
-        gate = _model_gate({"rank_ic": -0.02, "icir": 0.3})
+        gate = _model_gate(_gate_eval(rank_ic=-0.02), group_returns=_monotonic_group(), net_return_after_cost=0.02)
         self.assertFalse(gate["passed"])
         self.assertIn("Rank IC", gate["reason"])
 
     def test_gate_rejects_missing_eval(self):
         gate = _model_gate({})
         self.assertFalse(gate["passed"])
+
+    def test_gate_rejects_non_monotonic_groups(self):
+        gate = _model_gate(_gate_eval(), group_returns={"monotonic": False, "direction": "none"}, net_return_after_cost=0.02)
+        self.assertFalse(gate["passed"])
+        self.assertIn("单调性", gate["reason"])
+
+    def test_gate_rejects_non_positive_net_return(self):
+        gate = _model_gate(_gate_eval(), group_returns=_monotonic_group(), net_return_after_cost=0.0)
+        self.assertFalse(gate["passed"])
+        self.assertIn("净收益", gate["reason"])
+
+    def test_gate_rejects_low_positive_ratio(self):
+        gate = _model_gate(_gate_eval(positive_ratio=0.3), group_returns=_monotonic_group(), net_return_after_cost=0.02)
+        self.assertFalse(gate["passed"])
+        self.assertIn("正日比例", gate["reason"])
 
 
 if __name__ == "__main__":

@@ -9,6 +9,8 @@ import math
 
 import pandas as pd
 
+from .capacity import estimate_capacity
+
 
 def winsorize_zscore(values: pd.Series, limits: tuple[float, float] = (0.01, 0.01)) -> pd.Series:
     if len(limits) != 2 or min(limits) < 0 or sum(limits) >= 1:
@@ -211,11 +213,25 @@ def analyze_factor_panel(
     if dollar_volume_column:
         daily_top_liquidity = top_group.groupby(date_column)[dollar_volume_column].sum(min_count=1)
         estimated = daily_top_liquidity.median() * participation_rate
+        per_asset_volumes = (
+            top_group.groupby(asset_column)[dollar_volume_column].apply(list).to_dict()
+        )
+        detail = estimate_capacity(
+            {str(symbol): list(volumes) for symbol, volumes in per_asset_volumes.items()},
+            participation_rate=participation_rate,
+        )
         capacity = {
             "method": "median_top_group_dollar_volume_x_participation_rate",
             "participation_rate": participation_rate,
             "estimated_notional": _finite(estimated),
             "currency": "source_data_currency",
+            "weakest_asset": detail.get("weakest_asset") if detail.get("available") else None,
+            "weakest_median_daily_dollar_volume": (
+                detail.get("weakest_median_daily_dollar_volume")
+                if detail.get("available") else None
+            ),
+            "total_capacity": detail.get("total_capacity") if detail.get("available") else None,
+            "per_asset": detail.get("per_asset", {}),
         }
 
     split = None

@@ -21,11 +21,50 @@ from .pipeline import build_targets
 from .position_sizing import SizingCosts, build_states
 from .ppo_policy import train_ppo
 from .providers import TushareDatasetProvider
-from .qlib_alpha158 import compute_factor_ic_report, run_alpha158
+from .qlib_alpha158 import run_alpha158
 from .qlib_dump import build_ohlcv_panel, dump_etf_to_qlib
-from .qlib_model import evaluate_scores, run_qlib_baseline, run_qlib_ensemble
-from .report_charts import compute_report_charts
+from .cost_model import build_cost_model
+from .qlib_model import compute_group_returns, evaluate_scores, run_qlib_baseline, run_qlib_ensemble
+from .report_charts import compute_market_state_report, compute_report_charts
 from .trading_agents import EvidenceItem, build_role_verdicts, synthesize_decision
+
+# 常见 ETF 的类别与跟踪指数（用于组合暴露诊断，非完整清单）
+_ETF_CATEGORIES = {
+    "510300.SH": ("宽基", "沪深300"),
+    "510500.SH": ("宽基", "中证500"),
+    "510050.SH": ("宽基", "上证50"),
+    "159915.SZ": ("宽基", "创业板指"),
+    "159919.SZ": ("宽基", "沪深300"),
+    "588000.SH": ("宽基", "科创50"),
+    "512880.SH": ("行业", "证券"),
+    "512690.SH": ("行业", "酒"),
+    "512480.SH": ("行业", "半导体"),
+    "515790.SH": ("主题", "光伏"),
+    "515030.SH": ("主题", "新能源车"),
+    "512010.SH": ("行业", "医药"),
+    "512170.SH": ("行业", "医疗"),
+    "512800.SH": ("行业", "银行"),
+    "512200.SH": ("行业", "房地产"),
+    "512660.SH": ("行业", "军工"),
+    "515000.SH": ("主题", "科技"),
+    "512400.SH": ("行业", "有色金属"),
+    "515050.SH": ("主题", "5G"),
+    "512720.SH": ("行业", "计算机"),
+    "159928.SZ": ("行业", "消费"),
+}
+
+
+def _classify_etf_exposure(symbols):
+    """返回每只 ETF 的类别/跟踪指数，以及同类重叠类别（用于暴露诊断）。"""
+    from collections import Counter
+
+    items = []
+    for symbol in symbols:
+        category, index = _ETF_CATEGORIES.get(str(symbol), ("未知", None))
+        items.append({"symbol": str(symbol), "category": category, "index": index})
+    counts = Counter(item["category"] for item in items)
+    overlaps = [cat for cat, count in counts.items() if count > 1 and cat != "未知"]
+    return {"items": items, "overlap_categories": overlaps}
 
 
 def synthetic_etf_panel(symbols, n_days: int = 120) -> pd.DataFrame:
@@ -235,27 +274,83 @@ def _panel_summary(panel) -> dict:
     }
 
 
-def _model_gate(baseline_eval: dict, *, min_ic: float = 0.0, min_icir: float = 0.0) -> dict:
-    """模型准入门：样本外 Rank IC 必须为正、ICIR 必须非负，否则保持现金。
+def _model_gate(
+    baseline_eval: dict,
+    *,
+    min_ic: float = 0.02,
+    min_icir: float = 0.15,
+    min_positive_ratio: float = 0.5,
+    net_return_after_cost: float | None = None,
+    group_returns: dict | None = None,
+    max_drawdown: float | None = None,
+    max_drawdown_limit: float = -1.0,
+) -> dict:
+    """多维模型准入门：样本外 Rank IC / ICIR / 正日比例 / 分组单调性 / 扣费后净收益 / 回撤。
 
-    这是最保守的阈值（只拒绝明显无效的模型），正式阈值应基于训练/验证期确定。
+    返回结构化规则明细；任一维度不达标即保持现金、不生成订单。阈值应由训练/验证期
+    确定并锁定，测试期只应用已锁定的阈值。
     """
     rank_ic = baseline_eval.get("rank_ic")
     icir = baseline_eval.get("icir")
+    positive_ratio = baseline_eval.get("positive_ratio")
+
+    rules: list[dict] = []
+
+    def check(name: str, passed: bool, detail: str) -> None:
+        rules.append({"name": name, "passed": bool(passed), "detail": detail})
+
     if rank_ic is None or icir is None:
-        return {"passed": False, "reason": "样本外评估缺失"}
-    if rank_ic <= min_ic:
-        return {"passed": False, "reason": f"样本外 Rank IC 非正（{rank_ic:.4f}）"}
-    if icir < min_icir:
-        return {"passed": False, "reason": f"Rank ICIR 为负（{icir:.4f}）"}
-    return {"passed": True, "reason": ""}
+        check("样本外评估", False, "Rank IC/ICIR 缺失")
+    else:
+        check("样本外 Rank IC", rank_ic > min_ic, f"Rank IC={rank_ic:.4f}（阈值 >{min_ic}）")
+        check("Rank ICIR", icir >= min_icir, f"ICIR={icir:.4f}（阈值 ≥{min_icir}）")
+
+    if positive_ratio is None:
+        check("Rank IC 正日比例", False, "缺失")
+    else:
+        check(
+            "Rank IC 正日比例",
+            positive_ratio >= min_positive_ratio,
+            f"正日比例={positive_ratio:.4f}（阈值 ≥{min_positive_ratio}）",
+        )
+
+    if group_returns is None:
+        check("分组收益单调性", False, "缺失")
+    else:
+        monotonic = bool(group_returns.get("monotonic", False))
+        score = group_returns.get("monotonicity_score")
+        direction = group_returns.get("direction", "none")
+        detail = f"单调性={direction}"
+        if score is not None:
+            detail += f"（得分 {score:.3f}）"
+        check("分组收益单调性", monotonic, detail)
+
+    if net_return_after_cost is None:
+        check("扣费后净收益", False, "缺失")
+    else:
+        check(
+            "扣费后净收益",
+            net_return_after_cost > 0,
+            f"扣费后净收益={net_return_after_cost:.4f}",
+        )
+
+    if max_drawdown is not None:
+        check(
+            "最大回撤",
+            max_drawdown >= max_drawdown_limit,
+            f"最大回撤={max_drawdown:.4f}（阈值 ≥{max_drawdown_limit}）",
+        )
+
+    failed = [rule for rule in rules if not rule["passed"]]
+    return {"passed": not failed, "reason": failed[0]["detail"] if failed else "", "rules": rules}
 
 
 def _build_neutralization_data(symbols, start_date, end_date):
     """拉取 A 股行业分类与总市值，用于行业/市值中性化（股票资产）。
 
-    返回 ``(industry_map, log_mv)``；``log_mv`` 以 (instrument, datetime) 为索引。
-    任一步失败则返回 ``(None, None)``，由调用方降级为不做中性化。
+    返回 ``(industry_map, log_mv, meta)``；``log_mv`` 以 (instrument, datetime) 为索引，
+    ``meta`` 记录数据来源与时点口径（行业为静态最新分类，存在历史回填风险）。
+    任一步失败则返回 ``(None, None, meta)``，由调用方降级为不做中性化。
     """
     provider = TushareDatasetProvider("TUSHARE_TOKEN")
 
@@ -283,11 +378,25 @@ def _build_neutralization_data(symbols, start_date, end_date):
         except Exception:
             continue
 
+    meta = {
+        "industry_source": "stock_basic.industry（静态最新）" if industry_map else None,
+        "industry_effective_date": None,
+        "market_cap_source": "daily_basic.total_mv（按日）",
+        "market_cap_date": None,
+        "disclaimer": "行业分类使用当前静态分类，可能存在历史分类偏差；市值取自对应交易日。",
+        "applied": bool(records),
+    }
+
     if not records:
-        return industry_map or None, None
+        return industry_map or None, None, meta
 
     frame = pd.DataFrame(records).set_index(["symbol", "datetime"])["log_mv"]
-    return industry_map or None, frame
+    dates = frame.index.get_level_values("datetime")
+    meta["market_cap_date"] = {
+        "from": str(pd.Timestamp(dates.min()).date()),
+        "to": str(pd.Timestamp(dates.max()).date()),
+    }
+    return industry_map or None, frame, meta
 
 
 def run_phase9_alpha158(
@@ -303,6 +412,9 @@ def run_phase9_alpha158(
     compute_factor_ic: bool = True,
     min_ic: float = 0.02,
     min_icir: float = 0.15,
+    n_seeds: int = 3,
+    walk_forward: bool = False,
+    n_walk_folds: int = 3,
 ) -> dict:
     """Run the Phase 9 chain with Qlib's Alpha158 (or custom) factors for the candidate pool."""
     if top_k < 1:
@@ -313,53 +425,83 @@ def run_phase9_alpha158(
     dump_etf_to_qlib(ohlcv, qlib_dir)
 
     # 行业/市值中性化数据（仅股票资产，失败则降级为不做中性化）
-    industry_map, log_mv = None, None
+    industry_map, log_mv, neutralization_meta = None, None, None
     if asset_class == "stock":
         try:
-            industry_map, log_mv = _build_neutralization_data(symbols, start_date, end_date)
+            industry_map, log_mv, neutralization_meta = _build_neutralization_data(symbols, start_date, end_date)
         except Exception:
-            industry_map, log_mv = None, None
+            industry_map, log_mv, neutralization_meta = None, None, None
 
     baseline = run_alpha158(
         symbols, start_date, end_date, qlib_dir=qlib_dir, top_k=top_k,
         num_boost_round=100, num_leaves=31, learning_rate=0.05,
         feature_expressions=feature_expressions,
         industry_map=industry_map, log_mv=log_mv,
+        n_seeds=n_seeds, seed=seed, walk_forward=walk_forward, n_walk_folds=n_walk_folds,
+        select_factors=True, min_ic=min_ic, min_icir=min_icir,
+    )
+    selected_expressions = (
+        baseline.get("factor_selection", {}).get("selected") if baseline.get("factor_selection") else None
     )
     ensemble = run_alpha158(
         symbols, start_date, end_date, qlib_dir=qlib_dir, top_k=top_k,
         model_type="ensemble", num_models=5, num_boost_round=50, num_leaves=31, learning_rate=0.05,
-        feature_expressions=feature_expressions,
+        feature_expressions=selected_expressions or feature_expressions,
         industry_map=industry_map, log_mv=log_mv,
+        n_seeds=n_seeds, seed=seed, walk_forward=walk_forward, n_walk_folds=n_walk_folds,
+        select_factors=False,
     )
 
     panel = build_tushare_etf_panel(symbols, start_date, end_date, asset_class=asset_class)
     baseline_eval = evaluate_scores(baseline["scores"], panel, "forward_return_1d")
     ensemble_eval = evaluate_scores(ensemble["scores"], panel, "forward_return_1d")
+    cost_model = build_cost_model(asset_class)
     charts = compute_report_charts(
         baseline["scores"], panel, baseline["candidates"],
-        label_column="forward_return_1d",
+        label_column="forward_return_1d", cost_model=cost_model,
     )
-    total_days = int((pd.Timestamp(end_date) - pd.Timestamp(start_date)).days)
-    train_end = (pd.Timestamp(start_date) + pd.Timedelta(days=int(total_days * 0.7))).strftime("%Y-%m-%d")
-    factor_ic = (
-        compute_factor_ic_report(
-            symbols, start_date, end_date, qlib_dir=qlib_dir,
-            feature_expressions=feature_expressions,
-            min_ic=min_ic, min_icir=min_icir,
-            train_end=train_end,
-        )
-        if compute_factor_ic
-        else None
+    group_returns = compute_group_returns(baseline["scores"], panel, "forward_return_1d")
+    market_state = compute_market_state_report(
+        baseline["scores"], panel, "forward_return_1d", baseline["candidates"],
     )
+    seed_stability = None
+    seed_score_frames = baseline.get("seed_scores") or []
+    if len(seed_score_frames) > 1:
+        seed_ics = [
+            evaluate_scores(seed_scores_frame, panel, "forward_return_1d")["rank_ic"]
+            for seed_scores_frame in seed_score_frames
+        ]
+        seed_ics = [ic for ic in seed_ics if ic is not None]
+        if seed_ics:
+            seed_stability = {
+                "rank_ics": [round(ic, 4) for ic in seed_ics],
+                "mean": round(float(np.mean(seed_ics)), 4),
+                "std": round(float(np.std(seed_ics)), 4),
+            }
+    factor_ic = baseline.get("factor_selection") if compute_factor_ic else None
 
-    gate = _model_gate(baseline_eval)
+    gate = _model_gate(
+        baseline_eval,
+        min_ic=min_ic,
+        min_icir=min_icir,
+        net_return_after_cost=(
+            charts.get("metrics", {}).get("net_return_after_cost") if charts else None
+        ),
+        group_returns=group_returns,
+        max_drawdown=(
+            charts.get("metrics", {}).get("max_drawdown") if charts else None
+        ),
+    )
     base_result = {
         "panel": _panel_summary(panel),
         "baseline": {"rank_ic": baseline_eval["rank_ic"], "icir": baseline_eval["icir"]},
         "ensemble": {"rank_ic": ensemble_eval["rank_ic"], "icir": ensemble_eval["icir"]},
         "charts": charts,
+        "group_returns": group_returns,
+        "market_state": market_state,
+        "seed_stability": seed_stability,
         "factor_ic": factor_ic,
+        "neutralization_meta": neutralization_meta,
         "model_gate": gate,
         "research_only": True,
         "execution_enabled": False,
@@ -373,6 +515,7 @@ def run_phase9_alpha158(
             "verification": [],
             "sizing": {"adjustment": 0.0},
             "targets": [],
+            "etf_exposure": None,
         }
 
     candidates = []
@@ -381,7 +524,9 @@ def run_phase9_alpha158(
         latest_date, candidates = list(baseline["candidates"].items())[-1]
 
     final = _finalize(panel, candidates, latest_date, seed)
+    etf_exposure = _classify_etf_exposure(candidates) if asset_class == "etf" else None
     return {
         **base_result,
         **final,
+        "etf_exposure": etf_exposure,
     }

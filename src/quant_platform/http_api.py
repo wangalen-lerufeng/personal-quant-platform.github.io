@@ -230,11 +230,17 @@ def phase9_payload(payload: dict, control_plane, simulation_registry, config=Non
     keyword = str(payload.get("keyword", "")).strip() or None
     min_ic = float(payload.get("min_ic", 0.02) or 0.02)
     min_icir = float(payload.get("min_icir", 0.15) or 0.15)
+    n_seeds = int(payload.get("n_seeds", 3) or 3)
+    walk_forward = bool(payload.get("walk_forward", False))
+    n_walk_folds = int(payload.get("n_walk_folds", 3) or 3)
+    seed = int(payload.get("seed", 42) or 42)
     research = run_phase9_alpha158(
         symbols, start_date, end_date, top_k=top_k, asset_class=asset_class,
         feature_expressions=feature_expressions or None,
         compute_factor_ic=compute_factor_ic,
         min_ic=min_ic, min_icir=min_icir,
+        n_seeds=n_seeds, walk_forward=walk_forward, n_walk_folds=n_walk_folds,
+        seed=seed,
     )
     risk_engine = control_plane.risk_engine if control_plane is not None else RiskEngine(RiskLimits())
     targets = [
@@ -252,7 +258,10 @@ def phase9_payload(payload: dict, control_plane, simulation_registry, config=Non
 
     run_id = f"phase9-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(3)}"
     account_id = run_id
-    session = simulation_registry.create(account_id, initial_cash=initial_cash)
+    lot_size = 100 if asset_class in ("stock", "etf") else 1
+    session = simulation_registry.create(
+        account_id, initial_cash=initial_cash, lot_size=lot_size
+    )
     submission = submit_to_simulation(plan, session)
     _fill_paper_orders(session, plan, asset_class, prices=prices)
 
@@ -268,10 +277,16 @@ def phase9_payload(payload: dict, control_plane, simulation_registry, config=Non
         "paper_only": True,
         "execution_enabled": False,
     }
+    fingerprint = _build_phase9_fingerprint(
+        result, symbols=symbols, top_k=top_k, asset_class=asset_class,
+        feature_expressions=feature_expressions, start_date=start_date, end_date=end_date,
+        min_ic=min_ic, min_icir=min_icir, seed=seed, n_seeds=n_seeds,
+        walk_forward=walk_forward, n_walk_folds=n_walk_folds,
+    )
     _record_phase9_run(
         symbols, top_k, asset_class, index_code, result, run_id=run_id,
         feature_expressions=feature_expressions, start_date=start_date, end_date=end_date,
-        keyword=keyword,
+        keyword=keyword, fingerprint=fingerprint,
     )
     _persist_last_phase9(research, asset_class, index_code, run_id, account_id)
     _save_last_phase9_result(result)
@@ -326,10 +341,53 @@ def _index_name(index_code):
     return _INDEX_NAMES.get(index_code, index_code)
 
 
+def _git_version() -> str:
+    try:
+        root = Path(__file__).resolve().parents[2]
+        out = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"], cwd=root, stderr=subprocess.DEVNULL
+        ).decode().strip()
+        return out or "unknown"
+    except Exception:
+        return "unknown"
+
+
+def _build_phase9_fingerprint(
+    result, *, symbols, top_k, asset_class, feature_expressions, start_date, end_date,
+    min_ic, min_icir, seed, n_seeds, walk_forward, n_walk_folds,
+) -> dict:
+    factor_sel = result.get("factor_ic") or {}
+    charts_metrics = (result.get("charts") or {}).get("metrics") or {}
+    return {
+        "code_version": _git_version(),
+        "data_source": "tushare",
+        "asset_class": asset_class,
+        "start_date": start_date,
+        "end_date": end_date,
+        "symbols_count": len(symbols) if isinstance(symbols, list) else 0,
+        "top_k": top_k,
+        "feature_expressions": list(feature_expressions) if feature_expressions else [],
+        "factor_raw_count": factor_sel.get("raw_count"),
+        "factor_selected_count": factor_sel.get("selected_count"),
+        "min_ic": min_ic,
+        "min_icir": min_icir,
+        "seed": seed,
+        "n_seeds": n_seeds,
+        "walk_forward": walk_forward,
+        "n_walk_folds": n_walk_folds,
+        "purge_embargo_days": 1,
+        "cost_model": {
+            "label": charts_metrics.get("cost_label"),
+            "round_trip_rate": charts_metrics.get("cost_rate"),
+        },
+        "label_definition": "forward_return_1d",
+    }
+
+
 def _record_phase9_run(
     symbols, top_k, asset_class, index_code, result,
     run_history=None, run_id=None, feature_expressions=None, start_date=None, end_date=None,
-    keyword=None,
+    keyword=None, fingerprint=None,
 ) -> str:
     store = run_history or get_store()
     record = {
@@ -351,6 +409,7 @@ def _record_phase9_run(
         "orders": result.get("orders", []),
         "rejected_count": len(result.get("rejected", [])),
         "account_id": result.get("account_id"),
+        "fingerprint": fingerprint,
         "detail": result,
         "research_only": True,
         "execution_enabled": False,

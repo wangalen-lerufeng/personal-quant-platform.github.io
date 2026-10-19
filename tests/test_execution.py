@@ -111,3 +111,12 @@ class ExecutionTests(unittest.TestCase):
         self.assertEqual(fills[0].quantity, 25)
         self.assertEqual(engine.cash, 0)
         self.assertEqual(engine.orders[order_id].state, OrderState.PARTIALLY_FILLED)
+
+    def test_matching_engine_rounds_fill_to_lot_size(self):
+        engine = PaperMatchingEngine(initial_cash=10_000, max_participation_rate=1.0, lot_size=100)
+        order_id = engine.submit(OrderIntent("510300.SH", OrderSide.BUY, 250, "cta"))
+
+        fills = engine.on_market("510300.SH", price=4.0, volume=1000)
+
+        self.assertEqual(fills[0].quantity, 200)
+        self.assertEqual(engine.orders[order_id].state, OrderState.PARTIALLY_FILLED)

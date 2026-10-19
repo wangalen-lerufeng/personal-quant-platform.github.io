@@ -4,6 +4,7 @@ from typing import Protocol, runtime_checkable
 from uuid import uuid4
 
 from .domain import AssetClass, OrderIntent, OrderReceipt, OrderSide
+from .execution_constraints import apply_lot_size
 
 
 class OrderState(str, Enum):
@@ -62,7 +63,14 @@ class _PendingSimulationOrder:
 class PaperMatchingEngine:
     """Deterministic event-driven matcher for research and simulation only."""
 
-    def __init__(self, initial_cash: float, latency_events: int = 0, max_participation_rate: float = 0.1, slippage_rate: float = 0.0):
+    def __init__(
+        self,
+        initial_cash: float,
+        latency_events: int = 0,
+        max_participation_rate: float = 0.1,
+        slippage_rate: float = 0.0,
+        lot_size: float = 1.0,
+    ):
         if initial_cash < 0:
             raise ValueError("initial_cash must be non-negative")
         if latency_events < 0:
@@ -75,6 +83,7 @@ class PaperMatchingEngine:
         self.latency_events = latency_events
         self.max_participation_rate = max_participation_rate
         self.slippage_rate = slippage_rate
+        self.lot_size = float(lot_size)
         self.orders: dict[str, OrderLifecycle] = {}
         self._pending: dict[str, _PendingSimulationOrder] = {}
         self._intents: dict[str, OrderIntent] = {}
@@ -114,6 +123,7 @@ class PaperMatchingEngine:
                 quantity = min(quantity, self.cash / fill_price)
             else:
                 quantity = min(quantity, max(self.positions.get(symbol, 0.0), 0.0))
+            quantity = apply_lot_size(quantity, self.lot_size)
             if quantity <= 0:
                 continue
             notional = quantity * fill_price
@@ -150,6 +160,7 @@ class PaperMatchingEngine:
             "latency_events": self.latency_events,
             "max_participation_rate": self.max_participation_rate,
             "slippage_rate": self.slippage_rate,
+            "lot_size": self.lot_size,
             "positions": dict(self.positions),
             "orders": {
                 order_id: lifecycle.state.value
@@ -185,6 +196,7 @@ class PaperMatchingEngine:
             latency_events=int(snapshot.get("latency_events", 0)),
             max_participation_rate=float(snapshot.get("max_participation_rate", 0.1)),
             slippage_rate=float(snapshot.get("slippage_rate", 0.0)),
+            lot_size=float(snapshot.get("lot_size", 1.0)),
         )
         engine.cash = float(snapshot["cash"])
         engine.positions = {

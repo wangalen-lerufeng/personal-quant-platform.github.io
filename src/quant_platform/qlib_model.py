@@ -143,7 +143,103 @@ def evaluate_scores(scores: pd.DataFrame, panel: pd.DataFrame, label_column: str
         asset_column="symbol",
     )
     horizon = report["horizons"][label_column]
-    return {"rank_ic": horizon["rank_ic_mean"], "icir": horizon["icir"]}
+    series = report["ic_series"][label_column]
+    rank_ics = [row["rank_ic"] for row in series if row.get("rank_ic") is not None]
+    positive_ratio = (
+        float(sum(1 for v in rank_ics if v > 0) / len(rank_ics)) if rank_ics else None
+    )
+    return {
+        "rank_ic": horizon["rank_ic_mean"],
+        "icir": horizon["icir"],
+        "positive_ratio": positive_ratio,
+    }
+
+
+def compute_group_returns(
+    scores: pd.DataFrame,
+    panel: pd.DataFrame,
+    label_column: str,
+    n_groups: int = 5,
+) -> dict:
+    """Daily cross-sectional Q1~Q5 grouping of model scores vs forward returns.
+
+    Grouping is per trading day (never pooled across dates); the reported value
+    per group is the time-average of that day's mean forward return. Returns a
+    monotonicity check plus a long-short (top-minus-bottom) spread.
+    """
+    if n_groups < 2:
+        raise ValueError("n_groups must be at least 2")
+    if scores is None or panel is None:
+        return {"available": False, "reason": "缺少分数或面板"}
+    if label_column not in panel.columns:
+        return {"available": False, "reason": f"缺少标签列 {label_column}"}
+
+    merged = panel[["timestamp", "symbol", label_column]].merge(
+        scores[["timestamp", "symbol", "score"]],
+        on=["timestamp", "symbol"],
+        how="inner",
+    )
+    merged = merged.dropna(subset=["score", label_column])
+    if merged.empty:
+        return {"available": False, "reason": "分数与标签无重叠样本"}
+
+    daily_means = {group: [] for group in range(n_groups)}
+    days = 0
+    for _timestamp, section in merged.groupby("timestamp"):
+        if len(section) < n_groups:
+            continue
+        try:
+            section = section.copy()
+            section["_group"] = pd.qcut(
+                section["score"], q=n_groups, labels=False, duplicates="drop"
+            )
+        except ValueError:
+            continue
+        if section["_group"].nunique() < 2:
+            continue
+        means = section.groupby("_group")[label_column].mean()
+        for group, value in means.items():
+            daily_means[int(group)].append(float(value))
+        days += 1
+
+    groups = {
+        f"Q{group + 1}": float(np.mean(values))
+        for group, values in daily_means.items()
+        if values
+    }
+    if not groups or days == 0:
+        return {"available": False, "reason": "分组样本不足", "n_groups": n_groups}
+
+    ordered = [groups[f"Q{group + 1}"] for group in range(n_groups) if f"Q{group + 1}" in groups]
+    monotonic_up = all(a <= b for a, b in zip(ordered, ordered[1:]))
+    monotonic_down = all(a >= b for a, b in zip(ordered, ordered[1:]))
+    direction = "ascending" if monotonic_up else ("descending" if monotonic_down else "none")
+    long_short = ordered[-1] - ordered[0] if len(ordered) >= 2 else None
+
+    monotonicity_score = None
+    if len(ordered) >= 2:
+        monotonicity_score = float(
+            pd.Series(range(len(ordered))).corr(pd.Series(ordered), method="spearman")
+        )
+    overall_mean = float(merged[label_column].mean()) if not merged.empty else None
+    top_relative = (
+        (ordered[-1] - overall_mean)
+        if (len(ordered) >= 1 and overall_mean is not None)
+        else None
+    )
+
+    return {
+        "available": True,
+        "n_groups": n_groups,
+        "days": days,
+        "groups": {label: round(value, 6) for label, value in groups.items()},
+        "long_short": round(long_short, 6) if long_short is not None else None,
+        "monotonic": monotonic_up or monotonic_down,
+        "direction": direction,
+        "monotonicity_score": round(monotonicity_score, 6) if monotonicity_score is not None else None,
+        "overall_mean": round(overall_mean, 6) if overall_mean is not None else None,
+        "top_relative": round(top_relative, 6) if top_relative is not None else None,
+    }
 
 
 def _resolve_boundary(panel, label_column, oos_boundary):

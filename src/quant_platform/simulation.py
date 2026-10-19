@@ -20,6 +20,7 @@ class PaperSimulationSession:
         latency_events: int = 0,
         max_participation_rate: float = 0.1,
         slippage_rate: float = 0.0,
+        lot_size: float = 1.0,
     ):
         if not account_id.strip():
             raise ValueError("account_id is required")
@@ -32,6 +33,7 @@ class PaperSimulationSession:
             latency_events=latency_events,
             max_participation_rate=max_participation_rate,
             slippage_rate=slippage_rate,
+            lot_size=lot_size,
         )
         self.order_risk = RiskEngine(self.limits)
         self.account_risk = RiskMonitor(self.limits, initial_cash)
@@ -177,6 +179,7 @@ class PaperSimulationSession:
                 matcher_snapshot.get("max_participation_rate", 0.1)
             ),
             slippage_rate=float(matcher_snapshot.get("slippage_rate", 0.0)),
+            lot_size=float(matcher_snapshot.get("lot_size", 1.0)),
         )
         session.matcher = PaperMatchingEngine.from_snapshot(matcher_snapshot)
         session.order_risk.positions = dict(session.matcher.positions)
@@ -223,6 +226,7 @@ class PaperSimulationRegistry:
         latency_events: int = 0,
         max_participation_rate: float = 0.1,
         slippage_rate: float = 0.0,
+        lot_size: float = 1.0,
     ) -> PaperSimulationSession:
         if account_id in self._sessions:
             raise ValueError(f"simulation account already exists: {account_id}")
@@ -239,6 +243,7 @@ class PaperSimulationRegistry:
             latency_events=latency_events,
             max_participation_rate=max_participation_rate,
             slippage_rate=slippage_rate,
+            lot_size=lot_size,
         )
         self._sessions[account_id] = session
         session._persist()
