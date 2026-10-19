@@ -21,6 +21,8 @@ def compute_factor_ic_report(
     top_n: int = 20,
     min_ic: float = 0.02,
     min_icir: float = 0.15,
+    train_end=None,
+    corr_threshold: float = 0.9,
 ) -> dict:
     """Return per-factor Rank IC + ICIR for the factor set used by the pipeline.
 
@@ -28,6 +30,9 @@ def compute_factor_ic_report(
     it reports the top-N of Alpha158's ~158 factors by absolute Rank IC. Each factor
     is also tagged ``keep``/``drop`` by the ``min_ic``/``min_icir`` thresholds so the
     console can suggest a trimmed factor list for iterative optimisation.
+
+    When ``train_end`` is given, IC/ICIR are computed only over the training period
+    ``[start_date, train_end]`` so factor selection does not peek into the test period.
     """
     import numpy as np
     from qlib.data import D
@@ -46,13 +51,14 @@ def compute_factor_ic_report(
     if not expressions:
         return {
             "factors": [], "total": 0, "kept": 0, "recommended": [],
-            "min_ic": min_ic, "min_icir": min_icir,
+            "min_ic": min_ic, "min_icir": min_icir, "train_end": train_end,
             "research_only": True, "execution_enabled": False,
         }
 
+    ic_end = train_end or end_date
     frame = D.features(
         list(symbols), expressions + [FORWARD_RETURN_EXPR],
-        start_time=start_date, end_time=end_date,
+        start_time=start_date, end_time=ic_end,
     ).dropna(subset=[FORWARD_RETURN_EXPR])
 
     report = []
@@ -85,14 +91,29 @@ def compute_factor_ic_report(
         })
 
     report.sort(key=lambda item: abs(item["rank_ic"]), reverse=True)
+    top_report = report[: max(1, int(top_n))]
+
+    # 相关性聚类：在 Top-N 因子内，与已保留因子 |corr| >= 阈值的标记为冗余（剔除）
+    if len(top_report) >= 2:
+        exprs = [item["expression"] for item in top_report]
+        corr = frame[exprs].corr()
+        kept_indices = []
+        for i, item in enumerate(top_report):
+            if any(abs(corr.iloc[i, j]) >= corr_threshold for j in kept_indices):
+                item["verdict"] = "drop"
+                item["redundant"] = True
+            else:
+                kept_indices.append(i)
+
     recommended = [item["expression"] for item in report if item["verdict"] == "keep"]
     return {
-        "factors": report[: max(1, int(top_n))],
+        "factors": top_report,
         "total": len(report),
         "kept": len(recommended),
         "recommended": recommended,
         "min_ic": min_ic,
         "min_icir": min_icir,
+        "train_end": train_end,
         "research_only": True,
         "execution_enabled": False,
     }

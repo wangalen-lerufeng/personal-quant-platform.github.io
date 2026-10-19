@@ -291,11 +291,14 @@ def run_phase9_alpha158(
         baseline["scores"], panel, baseline["candidates"],
         label_column="forward_return_1d",
     )
+    total_days = int((pd.Timestamp(end_date) - pd.Timestamp(start_date)).days)
+    train_end = (pd.Timestamp(start_date) + pd.Timedelta(days=int(total_days * 0.7))).strftime("%Y-%m-%d")
     factor_ic = (
         compute_factor_ic_report(
             symbols, start_date, end_date, qlib_dir=qlib_dir,
             feature_expressions=feature_expressions,
             min_ic=min_ic, min_icir=min_icir,
+            train_end=train_end,
         )
         if compute_factor_ic
         else None
