@@ -2,9 +2,13 @@
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from http.client import IncompleteRead
+import hashlib
+import json
 import os
 import threading
 import time
+from pathlib import Path
+
 import requests
 from urllib.parse import urlsplit
 from .domain import AssetClass, MarketEvent
@@ -32,6 +36,32 @@ class _RateLimiter:
 
 
 _tushare_rate_limiter = _RateLimiter(_TUSHARE_REQUESTS_PER_MINUTE)
+
+
+_TUSHARE_CACHE_DIR = Path("data/tushare_cache")
+
+
+def _cache_key(dataset: str, symbol: str, start_date: str, end_date: str) -> str:
+    raw = f"{dataset}|{symbol}|{start_date}|{end_date}".encode("utf-8")
+    return hashlib.md5(raw).hexdigest()
+
+
+def _cache_load(dataset: str, symbol: str, start_date: str, end_date: str):
+    path = _TUSHARE_CACHE_DIR / f"{_cache_key(dataset, symbol, start_date, end_date)}.json"
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def _cache_store(dataset: str, symbol: str, start_date: str, end_date: str, records) -> None:
+    path = _TUSHARE_CACHE_DIR / f"{_cache_key(dataset, symbol, start_date, end_date)}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(records, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(path)
 
 
 def _bypass_proxy_for_tushare() -> None:
@@ -242,6 +272,9 @@ class TushareDatasetProvider:
         dataset = str(dataset).lower()
         if dataset not in self.ALLOWED_DATASETS:
             raise ValueError(f"unsupported Tushare dataset: {dataset}")
+        cached = _cache_load(dataset, symbol, start_date, end_date)
+        if cached is not None:
+            return cached
         client = _create_tushare_client(self.token_env)
         method = getattr(client, dataset)
         dates = {
@@ -274,9 +307,10 @@ class TushareDatasetProvider:
         if frame is None or frame.empty:
             return []
         # Pandas/numpy scalar values are normalized before JSON serialization.
-        import json
-
-        return json.loads(frame.to_json(orient="records", date_format="iso", force_ascii=False))
+        records = json.loads(frame.to_json(orient="records", date_format="iso", force_ascii=False))
+        if records:
+            _cache_store(dataset, symbol, start_date, end_date, records)
+        return records
 
     def fetch_index_constituents(self, index_code, end_date, lookback_days: int = 30) -> list[str]:
         """Return the constituent stock codes of an index on the latest available date."""
