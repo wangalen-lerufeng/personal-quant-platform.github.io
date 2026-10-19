@@ -129,14 +129,15 @@ def _create_tushare_client(token_env: str):
     except ImportError as error:
         raise RuntimeError("Tushare is not installed; run python3 -m pip install tushare") from error
     client = ts.pro_api(token)
-    base_url = (os.getenv("TUSHARE_BASE_URL") or "").strip()
+    # 官方新地址 api.tushare.pro；旧地址 api.waditu.com 已不稳定、易超时
+    base_url = (os.getenv("TUSHARE_BASE_URL") or "http://api.tushare.pro/dataapi").strip()
     if base_url:
         parsed = urlsplit(base_url)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise RuntimeError("TUSHARE_BASE_URL must be an http or https URL")
         if parsed.query or parsed.fragment:
             raise RuntimeError("TUSHARE_BASE_URL must not contain query parameters or fragments")
-        client._DataApi__http_url = base_url.rstrip("/") + "/"
+        client._DataApi__http_url = base_url.rstrip("/")
     return client
 
 

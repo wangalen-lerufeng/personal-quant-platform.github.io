@@ -19,7 +19,7 @@ class TushareCustomEndpointTests(unittest.TestCase):
         tushare = SimpleNamespace(pro_api=Mock(return_value=client))
         environment = {
             "TUSHARE_TOKEN": "test-token-not-a-real-secret",
-            "TUSHARE_BASE_URL": "http://data.example.test:8030/",
+            "TUSHARE_BASE_URL": "http://data.example.test:8030/dataapi",
         }
 
         with patch.dict(os.environ, environment, clear=False), patch.dict(
