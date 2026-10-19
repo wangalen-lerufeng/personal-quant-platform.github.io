@@ -55,7 +55,7 @@ def _fetch_symbol_ohlcv(symbol, provider, daily_dataset, start_date, end_date):
     return rows
 
 
-def build_ohlcv_panel(symbols, start_date, end_date, token_env="TUSHARE_TOKEN", asset_class="etf", max_workers=4) -> pd.DataFrame:
+def build_ohlcv_panel(symbols, start_date, end_date, token_env="TUSHARE_TOKEN", asset_class="etf", max_workers=1) -> pd.DataFrame:
     """Fetch OHLCV + amount from Tushare (``fund_daily`` or ``daily``) and derive VWAP."""
     symbols = [str(symbol).strip() for symbol in symbols if str(symbol).strip()]
     if not symbols:

@@ -83,7 +83,7 @@ def _fetch_symbol_daily_adj(symbol, provider, daily_dataset, adj_dataset, start_
     return daily_rows, adj_rows
 
 
-def build_tushare_etf_panel(symbols, start_date, end_date, token_env="TUSHARE_TOKEN", asset_class="etf", max_workers=4) -> pd.DataFrame:
+def build_tushare_etf_panel(symbols, start_date, end_date, token_env="TUSHARE_TOKEN", asset_class="etf", max_workers=1) -> pd.DataFrame:
     """Fetch daily + adjustment data from Tushare (ETF/stock/HK) and build a panel."""
     symbols = [str(symbol).strip() for symbol in symbols if str(symbol).strip()]
     if len(symbols) < 2:

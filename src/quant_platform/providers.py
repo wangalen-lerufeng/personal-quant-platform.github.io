@@ -3,11 +3,35 @@ from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from http.client import IncompleteRead
 import os
+import threading
 import time
 import requests
 from urllib.parse import urlsplit
 from .domain import AssetClass, MarketEvent
 from .data_quality import validate_events
+
+
+_TUSHARE_REQUESTS_PER_MINUTE = 240  # 留出余量，避免触发 Tushare 300次/分钟上限
+
+
+class _RateLimiter:
+    """进程级限流：让 Tushare 请求均匀铺开，避免批量取数时触发频率上限。"""
+
+    def __init__(self, requests_per_minute: int):
+        self._lock = threading.Lock()
+        self._interval = 60.0 / requests_per_minute
+        self._next = 0.0
+
+    def acquire(self) -> None:
+        with self._lock:
+            now = time.monotonic()
+            wait = self._next - now
+            if wait > 0:
+                time.sleep(wait)
+            self._next = time.monotonic() + self._interval
+
+
+_tushare_rate_limiter = _RateLimiter(_TUSHARE_REQUESTS_PER_MINUTE)
 
 
 def _bypass_proxy_for_tushare() -> None:
@@ -234,6 +258,7 @@ class TushareDatasetProvider:
             arguments = {"ts_code": symbol, **dates}
         for attempt in range(3):
             try:
+                _tushare_rate_limiter.acquire()
                 frame = method(**arguments)
                 break
             except Exception as error:
