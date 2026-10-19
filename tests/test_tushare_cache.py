@@ -37,6 +37,7 @@ class TushareCacheTests(unittest.TestCase):
         ]
         provider = TushareDatasetProvider("TEST_TOKEN")
         with patch("quant_platform.providers._cache_load_full", return_value=cached), \
+             patch("quant_platform.providers._cache_fresh", return_value=False), \
              patch.object(provider, "_fetch_tushare", return_value=[{"trade_date": "20240103", "close": 12.0}]) as mock_fetch, \
              patch("quant_platform.providers._cache_store_full") as mock_store:
             result = provider.fetch_records("daily", "600519.SH", "2024-01-01", "2024-01-03")

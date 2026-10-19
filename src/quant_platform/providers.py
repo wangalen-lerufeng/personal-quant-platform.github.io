@@ -40,6 +40,9 @@ _tushare_rate_limiter = _RateLimiter(_TUSHARE_REQUESTS_PER_MINUTE)
 
 _TUSHARE_CACHE_DIR = Path("data/tushare_cache")
 
+# 当天反复跑时，Tushare 当日数据尚未更新，视为“新鲜”直接复用缓存，避免每次空拉尾部。
+_CACHE_TTL_SECONDS = 6 * 3600
+
 
 def _cache_key_full(dataset: str, symbol: str) -> str:
     return hashlib.md5(f"{dataset}|{symbol}".encode("utf-8")).hexdigest()
@@ -61,6 +64,14 @@ def _cache_store_full(dataset: str, symbol: str, records) -> None:
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(records, ensure_ascii=False), encoding="utf-8")
     tmp.replace(path)
+
+
+def _cache_fresh(dataset: str, symbol: str) -> bool:
+    path = _TUSHARE_CACHE_DIR / f"{_cache_key_full(dataset, symbol)}.json"
+    try:
+        return (time.time() - path.stat().st_mtime) < _CACHE_TTL_SECONDS
+    except OSError:
+        return False
 
 
 def _record_date(record) -> str:
@@ -324,8 +335,8 @@ class TushareDatasetProvider:
             dates = [day for day in (_record_date(record) for record in cached) if day]
             if dates:
                 cmin, cmax = min(dates), max(dates)
-                if cmin <= start_yyyymmdd and cmax >= end_yyyymmdd:
-                    # 缓存已覆盖整个区间，直接切片返回
+                if cmin <= start_yyyymmdd and (cmax >= end_yyyymmdd or _cache_fresh(dataset, symbol)):
+                    # 缓存已覆盖区间，或缓存是当天刚拉的（当日数据尚未更新），直接切片返回
                     return _filter_records(cached, start_yyyymmdd, end_yyyymmdd)
                 if cmin <= start_yyyymmdd:
                     # 只缺尾部，从缓存最新日期的次日开始增量拉取
