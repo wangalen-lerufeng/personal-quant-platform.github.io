@@ -313,6 +313,19 @@ def _fill_paper_orders(session, plan, asset_class: str, prices: dict[str, float]
             continue
 
 
+_INDEX_NAMES = {
+    "000300.SH": "沪深300",
+    "000905.SH": "中证500",
+    "000016.SH": "上证50",
+}
+
+
+def _index_name(index_code):
+    if not index_code or index_code == "manual":
+        return None
+    return _INDEX_NAMES.get(index_code, index_code)
+
+
 def _record_phase9_run(
     symbols, top_k, asset_class, index_code, result,
     run_history=None, run_id=None, feature_expressions=None, start_date=None, end_date=None,
@@ -323,6 +336,7 @@ def _record_phase9_run(
         "kind": "phase9",
         "asset_class": asset_class,
         "index_code": index_code or "manual",
+        "index_name": _index_name(index_code),
         "top_k": top_k,
         "symbols": list(symbols),
         "feature_expressions": list(feature_expressions) if feature_expressions else [],

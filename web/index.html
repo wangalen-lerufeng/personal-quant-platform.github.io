@@ -351,7 +351,8 @@ Sum(Greater($close-Ref($close,1), 0), 14)/(Sum(Abs($close-Ref($close,1)), 14)+1e
           const RED = '#e03131', GREEN = '#16a34a';
           const sign = (v) => (v > 0 ? RED : (v < 0 ? GREEN : '#6b7890'));
           const mcell = (label, value, color) => `<div style="background:#f8fbff;border:1px solid var(--line);border-radius:8px;padding:10px 12px"><div style="font-size:11px;color:var(--muted)">${label}</div><div style="font-size:17px;font-weight:800;margin-top:3px;color:${color || 'var(--ink)'}">${value}</div></div>`;
-          html += `<div style="margin-top:8px;font-size:12px;color:var(--muted)">资产类型 ${esc(r.asset_class)} · 指数 ${esc(r.index_code)} · top_k ${r.top_k} · 股票池 ${(r.symbols || []).length} 只 · ${esc(r.start_date || '?')} ~ ${esc(r.end_date || '?')} · 样本 ${b.sample_days ?? '—'} 日${r.keyword ? ' · 关键词：' + esc(r.keyword) : ''}</div>`;
+          const selText = r.keyword ? `关键词：${r.keyword}` : (r.index_name ? `指数：${r.index_name}（${r.index_code}）` : `自选股：${(r.symbols || []).join(', ')}`);
+          html += `<div style="margin-top:8px;font-size:12px;color:var(--muted)">选股：${esc(selText)} · 资产 ${esc(r.asset_class)} · top_k ${r.top_k} · 股票池 ${(r.symbols || []).length} 只 · ${esc(r.start_date || '?')} ~ ${esc(r.end_date || '?')} · 样本 ${b.sample_days ?? '—'} 日</div>`;
           html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(128px,1fr));gap:8px;margin-top:10px">';
           html += mcell('策略收益', fmtPct(b.strategy_cumulative_return), sign(b.strategy_cumulative_return));
           html += mcell('基准收益', fmtPct(b.benchmark_cumulative_return), sign(b.benchmark_cumulative_return));
