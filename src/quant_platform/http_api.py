@@ -35,7 +35,7 @@ from .order_features import analyze_order_flow
 from .phase9_service import run_phase9_alpha158
 from .pipeline import TargetPosition, plan_orders, submit_to_simulation
 from .portfolio_report import build_account_report
-from .providers import AkshareForexProvider, TushareDatasetProvider, TushareProvider, TushareStockDailyProvider
+from .providers import AkshareForexProvider, TushareDatasetProvider, TushareProvider, TushareStockDailyProvider, clear_tushare_cache
 from .risk import RiskEngine, RiskLimits, RiskMonitor
 from .run_history import get_store
 from .runtime import StrategyRuntime
@@ -1123,6 +1123,7 @@ def api_payload(
 
 _JSON_POST_ROUTES = {
     "/settings/tushare-token", "/settings/anysearch-token",
+    "/settings/tushare-cache/clear",
     "/anysearch/keyword-to-stocks", "/agent/research", "/order-features",
     "/simulation-risk", "/factor-analysis", "/factor-panel-analysis",
     "/market-state", "/live-readiness", "/simulation/create",
@@ -1268,6 +1269,20 @@ def make_handler(
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+            if route == "/settings/tushare-cache/clear":
+                try:
+                    body = clear_tushare_cache()
+                    status = 200
+                except (ValueError, TypeError, RuntimeError) as error:
+                    body = {"error": str(error), "execution_enabled": False}
+                    status = 400
+                payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_header("Content-Length", str(len(payload)))
                 self.end_headers()
                 self.wfile.write(payload)

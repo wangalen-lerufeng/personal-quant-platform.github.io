@@ -90,6 +90,19 @@ def _merge_records(base, new):
     return records
 
 
+def clear_tushare_cache() -> dict:
+    """Delete all cached Tushare records and return how many files were removed."""
+    count = 0
+    if _TUSHARE_CACHE_DIR.exists():
+        for path in _TUSHARE_CACHE_DIR.glob("*.json"):
+            try:
+                path.unlink()
+                count += 1
+            except OSError:
+                pass
+    return {"cleared": count, "execution_enabled": False}
+
+
 def _bypass_proxy_for_tushare() -> None:
     """Exclude Tushare (a mainland API) from any local HTTP proxy.
 
