@@ -82,6 +82,14 @@ def _advance_days(yyyymmdd: str, days: int) -> str:
     return (datetime.strptime(yyyymmdd, "%Y%m%d") + timedelta(days=days)).strftime("%Y%m%d")
 
 
+_START_TOLERANCE_DAYS = 10
+
+
+def _covers_start(cmin: str, start_yyyymmdd: str) -> bool:
+    """缓存最早日期与请求起点相差在容差内（节假日导致）视为覆盖起点。"""
+    return cmin <= _advance_days(start_yyyymmdd, _START_TOLERANCE_DAYS)
+
+
 def _filter_records(records, start_yyyymmdd: str, end_yyyymmdd: str):
     result = []
     for record in records:
@@ -335,10 +343,10 @@ class TushareDatasetProvider:
             dates = [day for day in (_record_date(record) for record in cached) if day]
             if dates:
                 cmin, cmax = min(dates), max(dates)
-                if cmin <= start_yyyymmdd and (cmax >= end_yyyymmdd or _cache_fresh(dataset, symbol)):
-                    # 缓存已覆盖区间，或缓存是当天刚拉的（当日数据尚未更新），直接切片返回
-                    return _filter_records(cached, start_yyyymmdd, end_yyyymmdd)
-                if cmin <= start_yyyymmdd:
+                if _covers_start(cmin, start_yyyymmdd):
+                    if cmax >= end_yyyymmdd or _cache_fresh(dataset, symbol):
+                        # 缓存已覆盖区间，或缓存是当天刚拉的（当日数据尚未更新），直接切片返回
+                        return _filter_records(cached, start_yyyymmdd, end_yyyymmdd)
                     # 只缺尾部，从缓存最新日期的次日开始增量拉取
                     fetch_start = _advance_days(cmax, 1)
 
