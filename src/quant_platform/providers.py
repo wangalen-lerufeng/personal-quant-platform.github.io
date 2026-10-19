@@ -41,13 +41,12 @@ _tushare_rate_limiter = _RateLimiter(_TUSHARE_REQUESTS_PER_MINUTE)
 _TUSHARE_CACHE_DIR = Path("data/tushare_cache")
 
 
-def _cache_key(dataset: str, symbol: str, start_date: str, end_date: str) -> str:
-    raw = f"{dataset}|{symbol}|{start_date}|{end_date}".encode("utf-8")
-    return hashlib.md5(raw).hexdigest()
+def _cache_key_full(dataset: str, symbol: str) -> str:
+    return hashlib.md5(f"{dataset}|{symbol}".encode("utf-8")).hexdigest()
 
 
-def _cache_load(dataset: str, symbol: str, start_date: str, end_date: str):
-    path = _TUSHARE_CACHE_DIR / f"{_cache_key(dataset, symbol, start_date, end_date)}.json"
+def _cache_load_full(dataset: str, symbol: str):
+    path = _TUSHARE_CACHE_DIR / f"{_cache_key_full(dataset, symbol)}.json"
     if not path.exists():
         return None
     try:
@@ -56,12 +55,39 @@ def _cache_load(dataset: str, symbol: str, start_date: str, end_date: str):
         return None
 
 
-def _cache_store(dataset: str, symbol: str, start_date: str, end_date: str, records) -> None:
-    path = _TUSHARE_CACHE_DIR / f"{_cache_key(dataset, symbol, start_date, end_date)}.json"
+def _cache_store_full(dataset: str, symbol: str, records) -> None:
+    path = _TUSHARE_CACHE_DIR / f"{_cache_key_full(dataset, symbol)}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(records, ensure_ascii=False), encoding="utf-8")
     tmp.replace(path)
+
+
+def _record_date(record) -> str:
+    return str(record.get("trade_date", "")).replace("-", "")[:8]
+
+
+def _advance_days(yyyymmdd: str, days: int) -> str:
+    return (datetime.strptime(yyyymmdd, "%Y%m%d") + timedelta(days=days)).strftime("%Y%m%d")
+
+
+def _filter_records(records, start_yyyymmdd: str, end_yyyymmdd: str):
+    result = []
+    for record in records:
+        day = _record_date(record)
+        if not day or start_yyyymmdd <= day <= end_yyyymmdd:
+            result.append(record)
+    return result
+
+
+def _merge_records(base, new):
+    """按整条记录去重合并，并按键（trade_date）排序。"""
+    merged = {}
+    for record in list(base) + list(new):
+        merged[json.dumps(record, sort_keys=True, ensure_ascii=False)] = record
+    records = list(merged.values())
+    records.sort(key=_record_date)
+    return records
 
 
 def _bypass_proxy_for_tushare() -> None:
@@ -269,18 +295,41 @@ class TushareDatasetProvider:
     def fetch_records(
         self, dataset: str, symbol: str, start_date: str, end_date: str
     ) -> list[dict]:
+        """Fetch records, reusing a full-history local cache and only pulling the tail."""
         dataset = str(dataset).lower()
         if dataset not in self.ALLOWED_DATASETS:
             raise ValueError(f"unsupported Tushare dataset: {dataset}")
-        cached = _cache_load(dataset, symbol, start_date, end_date)
-        if cached is not None:
-            return cached
+        start_yyyymmdd = start_date.replace("-", "")[:8]
+        end_yyyymmdd = end_date.replace("-", "")[:8]
+
+        cached = _cache_load_full(dataset, symbol)
+        base = cached if cached is not None else []
+        fetch_start = start_yyyymmdd
+
+        if cached:
+            dates = [day for day in (_record_date(record) for record in cached) if day]
+            if dates:
+                cmin, cmax = min(dates), max(dates)
+                if cmin <= start_yyyymmdd and cmax >= end_yyyymmdd:
+                    # 缓存已覆盖整个区间，直接切片返回
+                    return _filter_records(cached, start_yyyymmdd, end_yyyymmdd)
+                if cmin <= start_yyyymmdd:
+                    # 只缺尾部，从缓存最新日期的次日开始增量拉取
+                    fetch_start = _advance_days(cmax, 1)
+
+        new_records = self._fetch_tushare(dataset, symbol, fetch_start, end_yyyymmdd)
+        merged = _merge_records(base, new_records)
+        if merged:
+            _cache_store_full(dataset, symbol, merged)
+        return _filter_records(merged, start_yyyymmdd, end_yyyymmdd)
+
+    def _fetch_tushare(
+        self, dataset: str, symbol: str, start_yyyymmdd: str, end_yyyymmdd: str
+    ) -> list[dict]:
+        """Raw rate-limited Tushare request for the given date range."""
         client = _create_tushare_client(self.token_env)
         method = getattr(client, dataset)
-        dates = {
-            "start_date": start_date.replace("-", ""),
-            "end_date": end_date.replace("-", ""),
-        }
+        dates = {"start_date": start_yyyymmdd, "end_date": end_yyyymmdd}
         if dataset == "stock_basic":
             arguments = {"ts_code": symbol}
         elif dataset == "fund_basic":
@@ -307,10 +356,7 @@ class TushareDatasetProvider:
         if frame is None or frame.empty:
             return []
         # Pandas/numpy scalar values are normalized before JSON serialization.
-        records = json.loads(frame.to_json(orient="records", date_format="iso", force_ascii=False))
-        if records:
-            _cache_store(dataset, symbol, start_date, end_date, records)
-        return records
+        return json.loads(frame.to_json(orient="records", date_format="iso", force_ascii=False))
 
     def fetch_index_constituents(self, index_code, end_date, lookback_days: int = 30) -> list[str]:
         """Return the constituent stock codes of an index on the latest available date."""
