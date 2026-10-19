@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import patch
 
 from quant_platform.phase9_service import (
+    _model_gate,
     build_tushare_etf_panel,
     run_phase9,
     synthetic_etf_panel,
@@ -79,6 +80,21 @@ class RunPhase9Tests(unittest.TestCase):
         single = panel[panel["symbol"] == SYMBOLS[0]].copy()
         with self.assertRaisesRegex(ValueError, "at least two"):
             run_phase9(single)
+
+
+class ModelGateTests(unittest.TestCase):
+    def test_gate_passes_for_positive_ic(self):
+        gate = _model_gate({"rank_ic": 0.04, "icir": 0.3})
+        self.assertTrue(gate["passed"])
+
+    def test_gate_rejects_non_positive_ic(self):
+        gate = _model_gate({"rank_ic": -0.02, "icir": 0.3})
+        self.assertFalse(gate["passed"])
+        self.assertIn("Rank IC", gate["reason"])
+
+    def test_gate_rejects_missing_eval(self):
+        gate = _model_gate({})
+        self.assertFalse(gate["passed"])
 
 
 if __name__ == "__main__":

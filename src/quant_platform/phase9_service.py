@@ -235,6 +235,22 @@ def _panel_summary(panel) -> dict:
     }
 
 
+def _model_gate(baseline_eval: dict, *, min_ic: float = 0.0, min_icir: float = 0.0) -> dict:
+    """模型准入门：样本外 Rank IC 必须为正、ICIR 必须非负，否则保持现金。
+
+    这是最保守的阈值（只拒绝明显无效的模型），正式阈值应基于训练/验证期确定。
+    """
+    rank_ic = baseline_eval.get("rank_ic")
+    icir = baseline_eval.get("icir")
+    if rank_ic is None or icir is None:
+        return {"passed": False, "reason": "样本外评估缺失"}
+    if rank_ic <= min_ic:
+        return {"passed": False, "reason": f"样本外 Rank IC 非正（{rank_ic:.4f}）"}
+    if icir < min_icir:
+        return {"passed": False, "reason": f"Rank ICIR 为负（{icir:.4f}）"}
+    return {"passed": True, "reason": ""}
+
+
 def run_phase9_alpha158(
     symbols,
     start_date,
@@ -271,13 +287,6 @@ def run_phase9_alpha158(
     panel = build_tushare_etf_panel(symbols, start_date, end_date, asset_class=asset_class)
     baseline_eval = evaluate_scores(baseline["scores"], panel, "forward_return_1d")
     ensemble_eval = evaluate_scores(ensemble["scores"], panel, "forward_return_1d")
-
-    candidates = []
-    latest_date = None
-    if baseline["candidates"]:
-        latest_date, candidates = list(baseline["candidates"].items())[-1]
-
-    final = _finalize(panel, candidates, latest_date, seed)
     charts = compute_report_charts(
         baseline["scores"], panel, baseline["candidates"],
         label_column="forward_return_1d",
@@ -291,13 +300,36 @@ def run_phase9_alpha158(
         if compute_factor_ic
         else None
     )
-    return {
+
+    gate = _model_gate(baseline_eval)
+    base_result = {
         "panel": _panel_summary(panel),
         "baseline": {"rank_ic": baseline_eval["rank_ic"], "icir": baseline_eval["icir"]},
         "ensemble": {"rank_ic": ensemble_eval["rank_ic"], "icir": ensemble_eval["icir"]},
         "charts": charts,
         "factor_ic": factor_ic,
-        **final,
+        "model_gate": gate,
         "research_only": True,
         "execution_enabled": False,
+    }
+
+    if not gate["passed"]:
+        # 模型不达标：保持现金，不生成候选池、目标仓位或订单
+        return {
+            **base_result,
+            "candidates": [],
+            "verification": [],
+            "sizing": {"adjustment": 0.0},
+            "targets": [],
+        }
+
+    candidates = []
+    latest_date = None
+    if baseline["candidates"]:
+        latest_date, candidates = list(baseline["candidates"].items())[-1]
+
+    final = _finalize(panel, candidates, latest_date, seed)
+    return {
+        **base_result,
+        **final,
     }
