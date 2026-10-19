@@ -211,6 +211,47 @@ def _make_custom_handler(expressions, instruments, start_time, end_time):
     )
 
 
+class _PrecomputedDataset:
+    """Minimal Qlib Dataset wrapper over precomputed train/valid/test frames."""
+
+    def __init__(self, frames):
+        self._frames = frames
+        self.segments = {name: None for name in frames}
+
+    def prepare(self, segments, col_set="__all", data_key=None, **kwargs):
+        if isinstance(segments, (list, tuple)):
+            return tuple(self._one(segment, col_set) for segment in segments)
+        return self._one(segments, col_set)
+
+    def _one(self, segment, col_set):
+        frame = self._frames[segment]
+        if col_set == "__all" or col_set is None:
+            return frame
+        return frame[col_set]
+
+
+def _build_dataset(frame, expressions, start, train_end, valid_end, end):
+    """将 D.features 的结果切成 train/valid/test 并包装成 Qlib Dataset。"""
+    frame = frame.copy()
+    if "datetime" in frame.index.names and frame.index.names[0] != "datetime":
+        frame = frame.reorder_levels(["datetime", "instrument"]).sort_index()
+
+    def _map_col(col):
+        return ("label", col) if col == FORWARD_RETURN_EXPR else ("feature", col)
+
+    frame.columns = pd.MultiIndex.from_tuples([_map_col(col) for col in frame.columns])
+
+    def seg(seg_start, seg_end):
+        idx = frame.index.get_level_values("datetime")
+        return frame[(idx >= seg_start) & (idx < seg_end)]
+
+    return _PrecomputedDataset({
+        "train": seg(start, train_end),
+        "valid": seg(train_end, valid_end),
+        "test": seg(valid_end, end),
+    })
+
+
 def run_alpha158(
     symbols,
     start_date,
@@ -221,14 +262,19 @@ def run_alpha158(
     model_type: str = "lgb",
     num_models: int = 5,
     feature_expressions=None,
+    preprocess: bool = True,
     **model_kwargs,
 ) -> dict:
-    """Train a Qlib model on Alpha158 (or custom) factors and return scores + candidates."""
-    from qlib.contrib.data.handler import Alpha158
+    """Train a Qlib model on Alpha158 (or custom) factors and return scores + candidates.
+
+    原始因子经 ``D.features`` 计算后，先过一遍因子预处理（MAD 去极值 + 截面标准化），
+    再喂给 LightGBM/DoubleEnsemble。
+    """
     from qlib.contrib.model.double_ensemble import DEnsembleModel
     from qlib.contrib.model.gbdt import LGBModel
-    from qlib.data.dataset import DatasetH
+    from qlib.data import D
 
+    from .factor_preprocessing import preprocess_factor_panel
     from .qlib_dump import init_qlib
 
     init_qlib(qlib_dir)
@@ -239,18 +285,23 @@ def run_alpha158(
     valid_end = start + pd.Timedelta(days=int(total_days * 0.85))
 
     if feature_expressions:
-        handler = _make_custom_handler(list(feature_expressions), list(symbols), start, end)
+        expressions = [str(e).strip() for e in feature_expressions if str(e).strip()]
     else:
-        handler = Alpha158(instruments=list(symbols), start_time=start, end_time=end, label=DEFAULT_LABEL)
+        from qlib.contrib.data.loader import Alpha158DL
 
-    dataset = DatasetH(
-        handler=handler,
-        segments={
-            "train": (start, train_end),
-            "valid": (train_end, valid_end),
-            "test": (valid_end, end),
-        },
-    )
+        expressions, _names = Alpha158DL.get_feature_config()
+    if not expressions:
+        raise ValueError("no factor expressions")
+
+    frame = D.features(
+        list(symbols), expressions + [FORWARD_RETURN_EXPR],
+        start_time=start_date, end_time=end_date,
+    ).dropna(subset=[FORWARD_RETURN_EXPR])
+
+    if preprocess:
+        frame = preprocess_factor_panel(frame, expressions)
+
+    dataset = _build_dataset(frame, expressions, start, train_end, valid_end, end)
 
     if model_type == "ensemble":
         model_kwargs.setdefault("decay", 0.5)
