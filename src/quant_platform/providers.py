@@ -359,14 +359,17 @@ class TushareDatasetProvider:
                 break
             except Exception as error:
                 message = str(error)
-                if "频率超限" in message or "超限" in message:
-                    if attempt == 2:
-                        raise RuntimeError(
-                            f"Tushare {dataset} 请求频率超限（300次/分钟），请缩小股票池或稍后重试: {message}"
-                        ) from error
-                    time.sleep(20)
-                else:
+                rate_limited = "频率超限" in message or "超限" in message
+                transient = any(
+                    keyword in message
+                    for keyword in (
+                        "IncompleteRead", "Connection broken", "timed out",
+                        "Read timed out", "reset", "ChunkedEncodingError",
+                    )
+                )
+                if attempt == 2 or not (rate_limited or transient):
                     raise RuntimeError(f"Tushare {dataset} 请求失败: {message}") from error
+                time.sleep(20 if rate_limited else 3)
         if frame is None or frame.empty:
             return []
         # Pandas/numpy scalar values are normalized before JSON serialization.
