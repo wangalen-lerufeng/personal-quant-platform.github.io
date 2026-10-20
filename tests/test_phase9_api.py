@@ -106,6 +106,26 @@ class Phase9ApiTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "start_date"):
             phase9_payload({"symbols": SYMBOLS, "start_date": ""}, None, registry)
 
+    def test_phase9_payload_forwards_dynamic_research_options(self):
+        registry = PaperSimulationRegistry(SimulationAccountStore(":memory:"))
+        with patch("quant_platform.http_api.run_phase9_alpha158", return_value=_fake_research()) as run:
+            phase9_payload({
+                "symbols": SYMBOLS,
+                "start_date": "2024-01-01",
+                "end_date": "2026-10-19",
+                "label_horizon": 5,
+                "dynamic_top_n": 100,
+                "liquidity_window": 20,
+                "min_history": 250,
+                "monthly_rebalance": True,
+                "rank_within_industry": True,
+            }, None, registry)
+        kwargs = run.call_args.kwargs
+        self.assertEqual(kwargs["label_horizon"], 5)
+        self.assertEqual(kwargs["dynamic_top_n"], 100)
+        self.assertTrue(kwargs["monthly_rebalance"])
+        self.assertTrue(kwargs["rank_within_industry"])
+
 
 if __name__ == "__main__":
     unittest.main()

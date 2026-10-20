@@ -123,6 +123,29 @@ class WebUiTests(unittest.TestCase):
         self.assertNotIn("fetch('/service/restart', {method:'POST'", self.page)
         self.assertNotIn("fetch('/agent/research', {method:'POST'", self.page)
 
+    def test_phase9_exposes_dynamic_universe_and_horizon_controls(self):
+        for element_id in (
+            "phase9LabelHorizon",
+            "phase9DynamicUniverse",
+            "phase9DynamicTopN",
+            "phase9LiquidityWindow",
+            "phase9MinHistory",
+            "phase9RebalanceFrequency",
+            "phase9IndustryRank",
+        ):
+            self.assertIn(f'id="{element_id}"', self.page)
+        for payload_key in (
+            "label_horizon",
+            "dynamic_top_n",
+            "liquidity_window",
+            "min_history",
+            "monthly_rebalance",
+            "rank_within_industry",
+        ):
+            self.assertIn(payload_key, self.page)
+        self.assertIn("本次研究配置", self.page)
+        self.assertIn("样本外截面", self.page)
+
 
 if __name__ == "__main__":
     unittest.main()

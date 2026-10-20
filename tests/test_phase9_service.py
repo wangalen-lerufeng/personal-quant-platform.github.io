@@ -45,6 +45,14 @@ class BuildTusharePanelTests(unittest.TestCase):
         self.assertIn("forward_return_1d", panel.columns)
         self.assertEqual(panel["symbol"].nunique(), 2)
 
+    def test_build_tushare_panel_supports_five_day_label(self):
+        with patch("quant_platform.phase9_service.TushareDatasetProvider") as MockProvider:
+            MockProvider.return_value.fetch_records.side_effect = self._fake_records
+            panel = build_tushare_etf_panel(
+                ["510300.SH", "510500.SH"], "2026-01-05", "2026-01-09", horizons=(5,),
+            )
+        self.assertIn("forward_return_5d", panel.columns)
+
     def test_build_tushare_etf_panel_requires_dates(self):
         with self.assertRaisesRegex(ValueError, "required"):
             build_tushare_etf_panel(["510300.SH", "510500.SH"], "", "")

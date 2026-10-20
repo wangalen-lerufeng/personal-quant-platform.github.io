@@ -234,6 +234,13 @@ def phase9_payload(payload: dict, control_plane, simulation_registry, config=Non
     walk_forward = bool(payload.get("walk_forward", False))
     n_walk_folds = int(payload.get("n_walk_folds", 3) or 3)
     seed = int(payload.get("seed", 42) or 42)
+    label_horizon = int(payload.get("label_horizon", 1) or 1)
+    dynamic_top_n_raw = payload.get("dynamic_top_n")
+    dynamic_top_n = int(dynamic_top_n_raw) if dynamic_top_n_raw not in (None, "") else None
+    liquidity_window = int(payload.get("liquidity_window", 20) or 20)
+    min_history = int(payload.get("min_history", 250) or 250)
+    monthly_rebalance = bool(payload.get("monthly_rebalance", False))
+    rank_within_industry = bool(payload.get("rank_within_industry", False))
     research = run_phase9_alpha158(
         symbols, start_date, end_date, top_k=top_k, asset_class=asset_class,
         feature_expressions=feature_expressions or None,
@@ -241,6 +248,12 @@ def phase9_payload(payload: dict, control_plane, simulation_registry, config=Non
         min_ic=min_ic, min_icir=min_icir,
         n_seeds=n_seeds, walk_forward=walk_forward, n_walk_folds=n_walk_folds,
         seed=seed,
+        label_horizon=label_horizon,
+        dynamic_top_n=dynamic_top_n,
+        liquidity_window=liquidity_window,
+        min_history=min_history,
+        monthly_rebalance=monthly_rebalance,
+        rank_within_industry=rank_within_industry,
     )
     risk_engine = control_plane.risk_engine if control_plane is not None else RiskEngine(RiskLimits())
     targets = [

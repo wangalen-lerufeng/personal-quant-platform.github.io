@@ -32,6 +32,7 @@
 - `docs/plans/2026-10-08-platform-design.md`
 - `docs/plans/2026-10-08-mvp-implementation-plan.md`
 - 验证与安全边界：`docs/verification.md`
+- 动态选股研究与 Web 操作指南：`docs/dynamic-stock-selection-web-guide.md`
 
 行情研究接口支持 `GET /market-data?symbol=EURUSD&limit=100`，其中 `limit` 返回该品种最新的 N 条标准化行情记录。
 

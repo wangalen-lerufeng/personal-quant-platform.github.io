@@ -12,6 +12,18 @@ DEFAULT_LABEL = (["Ref($close, -1)/$close - 1"], ["LABEL0"])
 FORWARD_RETURN_EXPR = "Ref($close, -1)/$close - 1"
 
 
+def forward_return_expression(horizon: int) -> str:
+    if int(horizon) < 1:
+        raise ValueError("label_horizon must be positive")
+    return f"Ref($close, -{int(horizon)})/$close - 1"
+
+
+def _effective_purge(label_horizon: int, purge: int, *, monthly_rebalance: bool) -> int:
+    # Month-end samples are farther apart than a 5-day label window; shifting by
+    # five sparse samples would incorrectly remove five months from each segment.
+    return 0 if monthly_rebalance else max(int(purge), int(label_horizon))
+
+
 def analyze_single_symbol_factors(
     symbol,
     factor_expressions,
@@ -123,7 +135,7 @@ class _PrecomputedDataset:
         return frame[col_set]
 
 
-def _build_dataset(frame, start, train_end, valid_start, valid_end, test_start, test_end):
+def _build_dataset(frame, start, train_end, valid_start, valid_end, test_start, test_end, *, label_column=FORWARD_RETURN_EXPR):
     """将 D.features 的结果切成 train/valid/test 并包装成 Qlib Dataset。
 
     各段边界显式传入，便于在 train/valid/test 之间加入 purge/embargo 隔离区：
@@ -134,7 +146,7 @@ def _build_dataset(frame, start, train_end, valid_start, valid_end, test_start, 
         frame = frame.reorder_levels(["datetime", "instrument"]).sort_index()
 
     def _map_col(col):
-        return ("label", col) if col == FORWARD_RETURN_EXPR else ("feature", col)
+        return ("label", col) if col == label_column else ("feature", col)
 
     frame.columns = pd.MultiIndex.from_tuples([_map_col(col) for col in frame.columns])
 
@@ -234,6 +246,10 @@ def run_alpha158(
     corr_threshold: float = 0.9,
     purge: int = 1,
     embargo: int = 1,
+    label_horizon: int = 1,
+    eligible_index=None,
+    rank_within_industry: bool = False,
+    monthly_rebalance: bool = False,
     **model_kwargs,
 ) -> dict:
     """Train a Qlib model on Alpha158 (or custom) factors and return scores + candidates.
@@ -253,6 +269,7 @@ def run_alpha158(
     init_qlib(qlib_dir)
     start = pd.Timestamp(start_date)
     end = pd.Timestamp(end_date)
+    label_expression = forward_return_expression(label_horizon)
 
     if feature_expressions:
         expressions = [str(e).strip() for e in feature_expressions if str(e).strip()]
@@ -264,9 +281,21 @@ def run_alpha158(
         raise ValueError("no factor expressions")
 
     frame = D.features(
-        list(symbols), expressions + [FORWARD_RETURN_EXPR],
+        list(symbols), expressions + [label_expression],
         start_time=start_date, end_time=end_date,
-    ).dropna(subset=[FORWARD_RETURN_EXPR])
+    ).dropna(subset=[label_expression])
+
+    if eligible_index is not None:
+        eligible = pd.MultiIndex.from_tuples(
+            [(str(symbol), pd.Timestamp(day)) for symbol, day in eligible_index],
+            names=["instrument", "datetime"],
+        )
+        normalized = frame.index
+        if normalized.names != ["instrument", "datetime"]:
+            normalized = normalized.reorder_levels(["instrument", "datetime"])
+        frame = frame[normalized.isin(eligible)]
+        if frame.empty:
+            raise ValueError("dynamic universe produced no eligible model samples")
 
     if preprocess:
         frame = preprocess_factor_panel(
@@ -281,23 +310,29 @@ def run_alpha158(
         train_end = start + pd.Timedelta(days=int((end - start).days * 0.7))
         selection = _select_factors(
             frame, expressions, start=start, train_end=train_end,
-            forward_column=FORWARD_RETURN_EXPR,
+            forward_column=label_expression,
             min_ic=min_ic, min_icir=min_icir, corr_threshold=corr_threshold,
         )
         train_exprs = selection["selected"]
         if not train_exprs:
             raise ValueError("因子筛选后无保留因子")
 
-    train_frame = frame[[*train_exprs, FORWARD_RETURN_EXPR]]
-
+    train_frame = frame[[*train_exprs, label_expression]]
+    # Keep human-readable Qlib expressions in reports, but use JSON-safe names at the model boundary.
+    train_frame = train_frame.rename(
+        columns={expr: f"F{index}" for index, expr in enumerate(train_exprs)}
+    )
     folds = _segment_boundaries(
-        frame, start, end, purge, embargo, walk_forward, n_walk_folds
+        frame, start, end,
+        _effective_purge(label_horizon, purge, monthly_rebalance=monthly_rebalance),
+        embargo, walk_forward, n_walk_folds,
     )
 
     fold_scores = []
     for fold_train_end, valid_start, valid_end, test_start, test_end in folds:
         dataset = _build_dataset(
-            train_frame, start, fold_train_end, valid_start, valid_end, test_start, test_end
+            train_frame, start, fold_train_end, valid_start, valid_end, test_start, test_end,
+            label_column=label_expression,
         )
         seed_scores = []
         for seed_offset in range(n_seeds):
@@ -323,6 +358,12 @@ def run_alpha158(
     else:
         scores = seed_score_frames[0]
 
+    if rank_within_industry:
+        if not industry_map:
+            raise ValueError("industry_map is required for industry ranking")
+        from .research_universe import rank_scores_within_industry
+        scores = rank_scores_within_industry(scores, industry_map)
+
     candidates = {}
     for timestamp, section in scores.groupby("timestamp"):
         top = section.sort_values("score", ascending=False)["symbol"].head(top_k)
@@ -333,4 +374,6 @@ def run_alpha158(
         "candidates": candidates,
         "seed_scores": seed_score_frames,
         "factor_selection": selection,
+        "label_horizon": int(label_horizon),
+        "label_expression": label_expression,
     }

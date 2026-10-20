@@ -122,7 +122,10 @@ def _fetch_symbol_daily_adj(symbol, provider, daily_dataset, adj_dataset, start_
     return daily_rows, adj_rows
 
 
-def build_tushare_etf_panel(symbols, start_date, end_date, token_env="TUSHARE_TOKEN", asset_class="etf", max_workers=1) -> pd.DataFrame:
+def build_tushare_etf_panel(
+    symbols, start_date, end_date, token_env="TUSHARE_TOKEN", asset_class="etf",
+    max_workers=1, horizons=(1,),
+) -> pd.DataFrame:
     """Fetch daily + adjustment data from Tushare (ETF/stock/HK) and build a panel."""
     symbols = [str(symbol).strip() for symbol in symbols if str(symbol).strip()]
     if len(symbols) < 2:
@@ -158,7 +161,7 @@ def build_tushare_etf_panel(symbols, start_date, end_date, token_env="TUSHARE_TO
             "adj_factor": 1.0,
         })
     basics = [{"ts_code": symbol, "list_status": "L"} for symbol in symbols]
-    return build_etf_panel(daily, adj_factors, basics=basics, horizons=(1,))
+    return build_etf_panel(daily, adj_factors, basics=basics, horizons=tuple(horizons))
 
 
 def _verification_evidence(panel, symbol, as_of, flag_volatile):
@@ -415,12 +418,30 @@ def run_phase9_alpha158(
     n_seeds: int = 3,
     walk_forward: bool = False,
     n_walk_folds: int = 3,
+    label_horizon: int = 1,
+    dynamic_top_n: int | None = None,
+    liquidity_window: int = 20,
+    min_history: int = 250,
+    monthly_rebalance: bool = False,
+    rank_within_industry: bool = False,
 ) -> dict:
     """Run the Phase 9 chain with Qlib's Alpha158 (or custom) factors for the candidate pool."""
     if top_k < 1:
         raise ValueError("top_k must be at least 1")
 
     ohlcv = build_ohlcv_panel(symbols, start_date, end_date, asset_class=asset_class)
+    eligible_index = None
+    if dynamic_top_n is not None:
+        from .research_universe import build_dynamic_universe_index
+        eligible_index = build_dynamic_universe_index(
+            ohlcv,
+            liquidity_window=liquidity_window,
+            top_n=dynamic_top_n,
+            min_history=min_history,
+            monthly=monthly_rebalance,
+        )
+        if eligible_index.empty:
+            raise ValueError("动态股票池为空，请降低历史长度或检查行情数据")
     qlib_dir = str(Path(qlib_dir).expanduser())
     dump_etf_to_qlib(ohlcv, qlib_dir)
 
@@ -439,6 +460,9 @@ def run_phase9_alpha158(
         industry_map=industry_map, log_mv=log_mv,
         n_seeds=n_seeds, seed=seed, walk_forward=walk_forward, n_walk_folds=n_walk_folds,
         select_factors=True, min_ic=min_ic, min_icir=min_icir,
+        label_horizon=label_horizon, eligible_index=eligible_index,
+        rank_within_industry=rank_within_industry,
+        monthly_rebalance=monthly_rebalance,
     )
     selected_expressions = (
         baseline.get("factor_selection", {}).get("selected") if baseline.get("factor_selection") else None
@@ -450,25 +474,31 @@ def run_phase9_alpha158(
         industry_map=industry_map, log_mv=log_mv,
         n_seeds=n_seeds, seed=seed, walk_forward=walk_forward, n_walk_folds=n_walk_folds,
         select_factors=False,
+        label_horizon=label_horizon, eligible_index=eligible_index,
+        rank_within_industry=rank_within_industry,
+        monthly_rebalance=monthly_rebalance,
     )
 
-    panel = build_tushare_etf_panel(symbols, start_date, end_date, asset_class=asset_class)
-    baseline_eval = evaluate_scores(baseline["scores"], panel, "forward_return_1d")
-    ensemble_eval = evaluate_scores(ensemble["scores"], panel, "forward_return_1d")
+    label_column = f"forward_return_{int(label_horizon)}d"
+    panel = build_tushare_etf_panel(
+        symbols, start_date, end_date, asset_class=asset_class, horizons=(label_horizon,)
+    )
+    baseline_eval = evaluate_scores(baseline["scores"], panel, label_column)
+    ensemble_eval = evaluate_scores(ensemble["scores"], panel, label_column)
     cost_model = build_cost_model(asset_class)
     charts = compute_report_charts(
         baseline["scores"], panel, baseline["candidates"],
-        label_column="forward_return_1d", cost_model=cost_model,
+        label_column=label_column, cost_model=cost_model,
     )
-    group_returns = compute_group_returns(baseline["scores"], panel, "forward_return_1d")
+    group_returns = compute_group_returns(baseline["scores"], panel, label_column)
     market_state = compute_market_state_report(
-        baseline["scores"], panel, "forward_return_1d", baseline["candidates"],
+        baseline["scores"], panel, label_column, baseline["candidates"],
     )
     seed_stability = None
     seed_score_frames = baseline.get("seed_scores") or []
     if len(seed_score_frames) > 1:
         seed_ics = [
-            evaluate_scores(seed_scores_frame, panel, "forward_return_1d")["rank_ic"]
+            evaluate_scores(seed_scores_frame, panel, label_column)["rank_ic"]
             for seed_scores_frame in seed_score_frames
         ]
         seed_ics = [ic for ic in seed_ics if ic is not None]
@@ -503,6 +533,16 @@ def run_phase9_alpha158(
         "factor_ic": factor_ic,
         "neutralization_meta": neutralization_meta,
         "model_gate": gate,
+        "research_config": {
+            "label_horizon": int(label_horizon),
+            "label_column": label_column,
+            "dynamic_top_n": dynamic_top_n,
+            "liquidity_window": int(liquidity_window),
+            "min_history": int(min_history),
+            "monthly_rebalance": bool(monthly_rebalance),
+            "rank_within_industry": bool(rank_within_industry),
+            "eligible_samples": len(eligible_index) if eligible_index is not None else None,
+        },
         "research_only": True,
         "execution_enabled": False,
     }

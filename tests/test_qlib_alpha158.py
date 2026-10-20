@@ -8,6 +8,7 @@ import pandas as pd
 
 from quant_platform.factor_selection import select_factors
 from quant_platform.qlib_alpha158 import (
+    _effective_purge,
     _segment_boundaries,
     analyze_single_symbol_factors,
     run_alpha158,
@@ -63,6 +64,33 @@ class Alpha158Tests(unittest.TestCase):
         self.assertFalse(result["scores"].empty)
         self.assertTrue(result["candidates"])
 
+    def test_run_alpha158_ensemble_handles_expression_feature_names(self):
+        frame = _synthetic_frame(SYMBOLS, n_days=200)
+        with tempfile.TemporaryDirectory() as tmp:
+            qlib_dir = dump_etf_to_qlib(frame, Path(tmp) / "qlib_data")
+            result = run_alpha158(
+                SYMBOLS, "2024-01-01", "2024-10-01", qlib_dir=qlib_dir, top_k=3,
+                model_type="ensemble", num_models=3, num_boost_round=20,
+                num_leaves=15, learning_rate=0.05,
+                feature_expressions=["Ref($close, 1)/$close - 1", "Mean($close, 20)/$close"],
+            )
+        self.assertFalse(result["scores"].empty)
+        self.assertTrue(result["candidates"])
+
+    def test_run_alpha158_supports_five_day_label(self):
+        frame = _synthetic_frame(SYMBOLS, n_days=220)
+        with tempfile.TemporaryDirectory() as tmp:
+            qlib_dir = dump_etf_to_qlib(frame, Path(tmp) / "qlib_data")
+            result = run_alpha158(
+                SYMBOLS, "2024-01-01", "2024-11-01", qlib_dir=qlib_dir, top_k=3,
+                num_boost_round=20, num_leaves=15, learning_rate=0.05,
+                feature_expressions=["Ref($close, 1)/$close - 1", "Mean($close, 20)/$close"],
+                label_horizon=5,
+            )
+        self.assertEqual(result["label_horizon"], 5)
+        self.assertEqual(result["label_expression"], "Ref($close, -5)/$close - 1")
+        self.assertFalse(result["scores"].empty)
+
 
 class SegmentBoundariesTests(unittest.TestCase):
     def _frame(self, n_days=100):
@@ -71,6 +99,10 @@ class SegmentBoundariesTests(unittest.TestCase):
             [["A", "B"], dates], names=["instrument", "datetime"]
         )
         return pd.DataFrame({"x": 1.0}, index=index)
+
+    def test_monthly_samples_do_not_treat_five_day_horizon_as_five_months(self):
+        self.assertEqual(_effective_purge(5, 1, monthly_rebalance=True), 0)
+        self.assertEqual(_effective_purge(5, 1, monthly_rebalance=False), 5)
 
     def test_single_split_has_purge_embargo_gaps(self):
         frame = self._frame()
